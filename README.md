@@ -1,8 +1,10 @@
-# 🚀 Jean dev environment
+# 🚀 Jean Dev Environment
 
 Bootstrap script to recreate my macOS development setup in minutes.
 
-## ✨ What it installs
+---
+
+## ✨ What It Installs
 
 - ZSH plugins
 - Powerlevel10k
@@ -11,12 +13,16 @@ Bootstrap script to recreate my macOS development setup in minutes.
 - FZF
 - Productivity aliases
 
+---
+
 ## 🔐 Safe & Idempotent
 
-- Does not overwrite existing .zshrc
+- Does not overwrite existing `.zshrc`
 - Creates backup automatically
 - Installs only missing packages
 - Can be executed multiple times safely
+
+---
 
 ## 📦 Installation
 
@@ -24,30 +30,42 @@ Bootstrap script to recreate my macOS development setup in minutes.
 git clone https://github.com/your-username/jean-dev-environment.git
 cd jean-dev-environment
 chmod +x mac-dev-setup
-./mac-dev-setup ```bash
+./mac-dev-setup
+```
+
+---
 
 ## 🧠 Why?
 
-Rebuilding a dev environment from scratch is painful.
+Rebuilding a development environment from scratch is painful and time-consuming.
 
 This script transforms setup into code — fast, reproducible and versioned.
 
-Setup as code > Manual setup.
+**Setup as code > Manual setup.**
 
-⸻
+By versioning your environment configuration, you:
 
-🛠️ Stack
-	•	Homebrew
-	•	ZSH
-	•	Powerlevel10k
-	•	Warp Terminal (recommended)
+- Reduce friction
+- Avoid inconsistencies across machines
+- Improve onboarding speed
+- Increase productivity
 
-⸻
+---
 
-📌 Future Improvements
-	•	Xcode CLI tools
-	•	Node / NVM
-	•	Ruby / Bundler
-	•	CocoaPods
-	•	SwiftLint
-	•	Git global config automation
+## 🛠️ Stack
+
+- Homebrew
+- ZSH
+- Powerlevel10k
+- Warp Terminal (recommended)
+
+---
+
+## 📌 Future Improvements
+
+- Xcode CLI Tools
+- Node / NVM
+- Ruby / Bundler
+- CocoaPods
+- SwiftLint
+- Git global config automation
