@@ -25,3 +25,29 @@ git clone https://github.com/your-username/jean-dev-environment.git
 cd jean-dev-environment
 chmod +x mac-dev-setup
 ./mac-dev-setup
+
+🧠 Why?
+
+Rebuilding a dev environment from scratch is painful.
+
+This script transforms setup into code — fast, reproducible and versioned.
+
+Setup as code > Manual setup.
+
+⸻
+
+🛠️ Stack
+	•	Homebrew
+	•	ZSH
+	•	Powerlevel10k
+	•	Warp Terminal (recommended)
+
+⸻
+
+📌 Future Improvements
+	•	Xcode CLI tools
+	•	Node / NVM
+	•	Ruby / Bundler
+	•	CocoaPods
+	•	SwiftLint
+	•	Git global config automation
