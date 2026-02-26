@@ -1,5 +1,39 @@
 # 🚀 Jean Dev Environment
 
+---
+
+## 🖥️ Preview
+
+### 🎨 Powerlevel10k Prompt
+
+<p align="center">
+  <img src="assets/terminal-preview.png" width="900"/>
+</p>
+
+---
+
+### ⚡ Autosuggestions
+
+<p align="center">
+  <img src="assets/autosuggestions.png" width="900"/>
+</p>
+
+---
+
+### 🎯 Syntax Highlighting
+
+<p align="center">
+  <img src="assets/syntax-highlight.png" width="900"/>
+</p>
+
+---
+
+### 🔎 FZF History Search
+
+<p align="center">
+  <img src="assets/fzf-search.png" width="900"/>
+</p>
+
 Bootstrap script to recreate my macOS development setup in minutes.
 
 ---
