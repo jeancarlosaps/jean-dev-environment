@@ -24,9 +24,9 @@ Bootstrap script to recreate my macOS development setup in minutes.
 git clone https://github.com/your-username/jean-dev-environment.git
 cd jean-dev-environment
 chmod +x mac-dev-setup
-./mac-dev-setup
+./mac-dev-setup ```bash
 
-🧠 Why?
+## 🧠 Why?
 
 Rebuilding a dev environment from scratch is painful.
 
