@@ -1,4 +1,4 @@
-# 🚀 jean-dev-environment
+# 🚀 Jean dev environment
 
 Bootstrap script to recreate my macOS development setup in minutes.
 
