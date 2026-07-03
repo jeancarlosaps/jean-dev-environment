@@ -1,0 +1,53 @@
+# =====================================================================
+# dev-env link manifest
+# ---------------------------------------------------------------------
+# Declarative source of truth for the symlinks injected into projects.
+#
+# Subset rules (keep the parser simple and predictable):
+#   - 2-space indentation, no tabs
+#   - no inline arrays, no anchors/aliases, no multiline scalars
+#   - no quotes required; values are taken verbatim
+#   - only the known keys below are allowed
+#
+# Keys:
+#   version         schema version of this file
+#   defaults        fallback values applied to every link
+#     required      true|false  -> if source is missing: fail (true) or skip (false)
+#     conflict      backup|skip|fail -> what to do when target already exists as real data
+#   profiles        named sets of links
+#     <name>
+#       extends         inherit links from another profile (shallow; child target wins)
+#       profileVersion  version of this profile (bump on breaking changes)
+#       links
+#         - source      path relative to the repo root (the dev-env)
+#           target      path relative to the project root
+#           required    optional override of defaults.required
+#           conflict    optional override of defaults.conflict
+# =====================================================================
+
+version: 1
+
+defaults:
+  required: true
+  conflict: backup
+
+profiles:
+  default:
+    profileVersion: 1
+    links:
+      - source: ai/shared/.claude
+        target: .claude
+      - source: ai/shared/.agents
+        target: .agents
+      - source: ai/shared/.cursor
+        target: .cursor
+      - source: ai/shared/_bmad
+        target: _bmad
+
+  swift:
+    extends: default
+    profileVersion: 1
+    links:
+      - source: ai/shared/mcp/swift.json
+        target: .mcp.json
+        required: false

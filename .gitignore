@@ -1,0 +1,6 @@
+# dev-env local state (per-machine, not shared)
+/state/
+/backups/
+
+# macOS
+.DS_Store
