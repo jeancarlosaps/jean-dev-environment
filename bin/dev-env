@@ -1,0 +1,146 @@
+#!/bin/bash
+# =====================================================================
+# dev-env - CLI for the centralized development environment
+# ---------------------------------------------------------------------
+# Single source of truth: <repo> (aliased as ~/Developer/dev-env).
+# Projects hold only symlinks, so `git clean -fdx` can never destroy
+# real configuration again.
+#
+# Usage:
+#   dev-env init                          one-time-per-machine setup
+#   dev-env project <path> [--profile P]  create/repair a project's links
+#   dev-env migrate  <path> [--profile P] move existing config in, link  (ETAPA 5)
+#   dev-env doctor   [<path>...|--all]    audit + report                 (ETAPA 6)
+#   dev-env validate <path>               smoke tests                     (ETAPA 7)
+#   dev-env help
+#
+# Global flags (any position):
+#   --dry-run           describe mutations, change nothing
+#   --profile <name>    manifest profile (default: default)
+#   --verbose           extra output
+#
+# Bash 3.2 compatible. No external dependencies.
+# =====================================================================
+
+set -u
+
+# --- resolve the repo root from this script's real location ----------
+_self="${BASH_SOURCE[0]:-$0}"
+while [ -L "$_self" ]; do
+  _d=$(cd -P "$(dirname "$_self")" && pwd)
+  _self=$(readlink "$_self")
+  case "$_self" in /*) ;; *) _self="$_d/$_self" ;; esac
+done
+BIN_DIR=$(cd -P "$(dirname "$_self")" && pwd)
+DEV_ENV_HOME=$(cd -P "$BIN_DIR/.." && pwd)
+
+# --- configuration ---------------------------------------------------
+DEV_ENV_STABLE="${DEV_ENV_STABLE:-$HOME/Developer/dev-env}"
+MANIFEST="$DEV_ENV_HOME/manifest/links.yaml"
+STATE_DIR="$DEV_ENV_HOME/state"
+LINK_BACKUP_ROOT="$DEV_ENV_HOME/backups"
+export DEV_ENV_HOME DEV_ENV_STABLE MANIFEST STATE_DIR LINK_BACKUP_ROOT
+
+# defaults for global flags
+DRY_RUN=0
+VERBOSE=0
+PROFILE="default"
+
+# --- load libraries --------------------------------------------------
+LIB="$DEV_ENV_HOME/bootstrap/lib"
+# shellcheck source=/dev/null
+. "$LIB/log.sh"
+# shellcheck source=/dev/null
+. "$LIB/yaml.sh"
+# shellcheck source=/dev/null
+. "$LIB/manifest.sh"
+# shellcheck source=/dev/null
+. "$LIB/link.sh"
+# shellcheck source=/dev/null
+. "$LIB/git.sh"
+
+usage() {
+  cat <<'USAGE'
+dev-env - centralized development environment
+
+  dev-env init                          one-time-per-machine setup
+  dev-env project <path> [--profile P]  create/repair a project's links
+  dev-env migrate  <path> [--profile P] move existing config in, then link
+  dev-env doctor   [<path>...|--all]    audit links and report
+  dev-env validate <path>               smoke tests
+
+Global flags:
+  --dry-run           describe mutations without changing anything
+  --profile <name>    manifest profile (default: default)
+  --verbose           extra output
+  -h, --help          this help
+USAGE
+}
+
+# --- parse global flags, keep positional args ------------------------
+COMMAND=""
+ARGS=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --dry-run) DRY_RUN=1 ;;
+    --verbose) VERBOSE=1 ;;
+    --profile)
+      shift
+      [ "$#" -gt 0 ] || { log_error "--profile needs a value"; exit 2; }
+      PROFILE="$1"
+      ;;
+    --profile=*) PROFILE="${1#--profile=}" ;;
+    -h|--help|help) COMMAND="help" ;;
+    --all) ARGS="$ARGS --all" ;;
+    -*) log_error "unknown flag: $1"; exit 2 ;;
+    *)
+      if [ -z "$COMMAND" ]; then COMMAND="$1"; else ARGS="$ARGS $1"; fi
+      ;;
+  esac
+  shift
+done
+export DRY_RUN VERBOSE PROFILE
+
+[ -n "$COMMAND" ] || { usage; exit 0; }
+
+# helper to load a command file on demand
+_load_cmd() {
+  local f="$DEV_ENV_HOME/bootstrap/commands/$1.sh"
+  if [ ! -f "$f" ]; then
+    log_error "command not available yet: $1"
+    return 1
+  fi
+  # shellcheck source=/dev/null
+  . "$f"
+}
+
+case "$COMMAND" in
+  help) usage ;;
+  init)
+    _load_cmd init && cmd_init
+    ;;
+  project)
+    # shellcheck disable=SC2086
+    _load_cmd project && cmd_project $ARGS
+    ;;
+  migrate)
+    # migrate reuses _project_register from project.sh
+    # shellcheck disable=SC2086
+    _load_cmd project && _load_cmd migrate && cmd_migrate $ARGS
+    ;;
+  doctor)
+    # doctor reads the registry via _registry_read from project.sh
+    # shellcheck disable=SC2086
+    _load_cmd project && _load_cmd doctor && cmd_doctor $ARGS
+    ;;
+  validate)
+    # validate reuses _dr_json_ok from doctor.sh
+    # shellcheck disable=SC2086
+    _load_cmd doctor && _load_cmd validate && cmd_validate $ARGS
+    ;;
+  *)
+    log_error "unknown command: $COMMAND"
+    usage
+    exit 2
+    ;;
+esac
