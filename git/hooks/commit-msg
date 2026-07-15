@@ -1,0 +1,38 @@
+#!/bin/bash
+# =====================================================================
+# commit-msg (AI guard) - global via core.hooksPath
+# ---------------------------------------------------------------------
+# Final gate before the commit object is written:
+#   1. strips AI trailers/signatures that survived prepare-commit-msg;
+#   2. blocks the commit if the remaining message still mentions an
+#      AI tool (see lib/ai-guard.sh for the pattern);
+#   3. blocks ANY remaining Co-Authored-By (multiple authorship shows
+#      up on GitHub as "X and Y committed" — never by default);
+#   4. chains to the repository's own commit-msg if present.
+# Never touches author/committer. Args: $1 message file.
+# =====================================================================
+set -u
+
+HOOK_DIR=$(cd -P "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)
+# shellcheck source=lib/ai-guard.sh
+. "$HOOK_DIR/lib/ai-guard.sh"
+
+if ! ai_guard_maintenance; then
+  ai_guard_strip "$1"
+  msg=$(cat "$1")
+  violations=$(ai_guard_violations "$msg")
+  if [ -n "$violations" ]; then
+    ai_guard_block_message commit-msg \
+      "mensagem contém referência a ferramenta de IA" "$violations"
+    exit 1
+  fi
+  coauthors=$(ai_guard_coauthor_violations "$msg")
+  if [ -n "$coauthors" ]; then
+    ai_guard_block_message commit-msg \
+      "coautoria não permitida (gera múltiplos autores no GitHub)" \
+      "$coauthors"
+    exit 1
+  fi
+fi
+
+ai_guard_delegate commit-msg "$@"

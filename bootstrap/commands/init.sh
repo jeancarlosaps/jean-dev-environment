@@ -9,6 +9,7 @@
 #   3. validate the manifest
 #   4. wire git's global ignore (~/.config/git/ignore)
 #   5. put <repo>/bin on PATH via a marked block in ~/.zshrc
+#   6. point git's global core.hooksPath at <repo>/git/hooks (AI guard)
 #
 # Globals expected from bin/dev-env:
 #   DEV_ENV_HOME   absolute path of the repo (real)
@@ -115,6 +116,62 @@ _init_path() {
   log_ok "🧭 added dev-env/bin to PATH in ~/.zshrc (open a new shell to use 'dev-env')"
 }
 
+# Global hooksPath -> the AI-guard hooks. Same philosophy as the master
+# symlink: if it already points elsewhere, warn and leave it untouched.
+_init_git_hooks() {
+  local hooks="$DEV_ENV_STABLE/git/hooks" current
+  current=$(git config --global core.hooksPath 2>/dev/null || true)
+  if [ "$current" = "$hooks" ]; then
+    log_info "✓ global core.hooksPath already correct: ${hooks/#$HOME/~}"
+    return 0
+  fi
+  if [ -n "$current" ]; then
+    log_error "core.hooksPath already set elsewhere: $current"
+    log_warn "leaving it untouched; resolve manually"
+    return 1
+  fi
+  if [ "${DRY_RUN:-0}" = "1" ]; then
+    log_dry "git config --global core.hooksPath ${hooks/#$HOME/~}"
+    return 0
+  fi
+  git config --global core.hooksPath "$hooks"
+  log_ok "🪝 global core.hooksPath -> ${hooks/#$HOME/~} (AI guard active)"
+}
+
+# The dev-env repo is authorized to version AI artifacts (they ARE its
+# content). Authorization is per-repo local git config — never a path
+# or name check — so any other repo needs the same explicit opt-in:
+#   git config ai-guard.allowArtifacts true
+_init_ai_guard_allow_self() {
+  local current
+  current=$(git -C "$DEV_ENV_HOME" config --bool ai-guard.allowartifacts 2>/dev/null || true)
+  if [ "$current" = "true" ]; then
+    log_info "✓ dev-env repo already authorized for AI artifacts"
+    return 0
+  fi
+  if [ "${DRY_RUN:-0}" = "1" ]; then
+    log_dry "git -C <dev-env> config ai-guard.allowArtifacts true"
+    return 0
+  fi
+  git -C "$DEV_ENV_HOME" config ai-guard.allowArtifacts true
+  log_ok "🔓 dev-env repo authorized to version its own AI content"
+}
+
+# git only falls back to ~/.config/git/ignore when core.excludesfile is
+# unset; a legacy excludesfile silently disables everything we write
+# there. Detect and warn (never rewrite the user's config).
+_init_git_excludes_check() {
+  local xdg="${XDG_CONFIG_HOME:-$HOME/.config}/git/ignore" current
+  current=$(git config --global core.excludesfile 2>/dev/null || true)
+  case "$current" in
+    ""|"$xdg"|"~/.config/git/ignore")
+      return 0 ;;
+  esac
+  log_warn "core.excludesfile aponta para ${current/#$HOME/~};"
+  log_warn "o ignore global do dev-env (~/.config/git/ignore) NÃO terá efeito."
+  log_warn "consolide os padrões em um único arquivo ou remova a config legada."
+}
+
 cmd_init() {
   log_step "dev-env init"
   local rc=0
@@ -122,7 +179,10 @@ cmd_init() {
   _init_structure
   _init_manifest || rc=1
   _init_git_ignore
+  _init_git_excludes_check
   _init_path
+  _init_git_hooks || rc=1
+  _init_ai_guard_allow_self
   if [ "$rc" -eq 0 ]; then
     log_ok "init complete"
   else
