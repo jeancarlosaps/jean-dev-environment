@@ -23,7 +23,11 @@ INIT_IGNORE_ENTRIES=".agents
 .claude
 .cursor
 _bmad
-.mcp.json"
+.mcp.json
+CLAUDE.md
+AGENTS.md
+GEMINI.md
+.cursorrules"
 
 _init_master_symlink() {
   local link="$DEV_ENV_STABLE" target="$DEV_ENV_HOME"
