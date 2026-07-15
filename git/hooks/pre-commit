@@ -1,0 +1,40 @@
+#!/bin/bash
+# =====================================================================
+# pre-commit (AI guard) - global via core.hooksPath
+# ---------------------------------------------------------------------
+# Runs before the commit message even exists:
+#   1. blocks AI artifacts staged for commit (.claude, CLAUDE.md,
+#      .cursor, prompts/memories/configs — see lib/ai-guard.sh);
+#   2. blocks invalid identity: author/committer matching an AI tool
+#      or bot, or committer different from the configured user;
+#   3. chains to the repository's own pre-commit if present.
+# Never rewrites author/committer — only blocks. No args, no stdin.
+# =====================================================================
+set -u
+
+HOOK_DIR=$(cd -P "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)
+# shellcheck source=lib/ai-guard.sh
+. "$HOOK_DIR/lib/ai-guard.sh"
+
+if ! ai_guard_maintenance; then
+  # repos explicitly authorized to version AI artifacts opt in via
+  # 'git config ai-guard.allowArtifacts true' (the dev-env repo gets
+  # this from 'dev-env init'); everywhere else staging one is blocked
+  files=""
+  if ! ai_guard_artifacts_allowed; then
+    files=$(ai_guard_staged_ai_files)
+  fi
+  if [ -n "$files" ]; then
+    ai_guard_block_message pre-commit \
+      "artefatos de IA staged (nunca versionar; mantenha apenas local)" \
+      "$files"
+    exit 1
+  fi
+  idents=$(ai_guard_ident_violations)
+  if [ -n "$idents" ]; then
+    ai_guard_block_message pre-commit "identidade Git inválida" "$idents"
+    exit 1
+  fi
+fi
+
+ai_guard_delegate pre-commit "$@"
