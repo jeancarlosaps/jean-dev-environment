@@ -108,6 +108,24 @@ _doctor_environment() {
   else
     _dr_fail "manifest invalid (run: manifest_validate for details)"
   fi
+
+  # AI-guard hooks (global core.hooksPath)
+  local hooks="$DEV_ENV_STABLE/git/hooks" hookspath h missing_h=""
+  hookspath=$(git config --global core.hooksPath 2>/dev/null || true)
+  if [ "$hookspath" = "$hooks" ]; then
+    for h in prepare-commit-msg commit-msg pre-push; do
+      [ -x "$DEV_ENV_HOME/git/hooks/$h" ] || missing_h="$missing_h $h"
+    done
+    if [ -z "$missing_h" ]; then
+      _dr_ok "AI-guard hooks active (core.hooksPath -> ${hooks/#$HOME/~})"
+    else
+      _dr_fail "AI-guard hooks missing/not executable:$missing_h"
+    fi
+  elif [ -n "$hookspath" ]; then
+    _dr_fail "core.hooksPath aponta para outro lugar: $hookspath (AI guard inativo)"
+  else
+    _dr_warn "core.hooksPath não configurado (run 'dev-env init') — AI guard inativo"
+  fi
 }
 
 # -------- per-project checks -----------------------------------------

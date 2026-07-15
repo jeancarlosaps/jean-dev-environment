@@ -1,0 +1,20 @@
+#!/bin/bash
+# =====================================================================
+# prepare-commit-msg (AI guard) - global via core.hooksPath
+# ---------------------------------------------------------------------
+# Removes AI trailers/signatures from the message source before the
+# commit proceeds (covers -m, templates, merges and squashes), then
+# chains to the repository's own prepare-commit-msg if present.
+# Args: $1 message file, $2 source, $3 sha (as per githooks(5)).
+# =====================================================================
+set -u
+
+HOOK_DIR=$(cd -P "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)
+# shellcheck source=lib/ai-guard.sh
+. "$HOOK_DIR/lib/ai-guard.sh"
+
+if ! ai_guard_maintenance; then
+  ai_guard_strip "$1"
+fi
+
+ai_guard_delegate prepare-commit-msg "$@"

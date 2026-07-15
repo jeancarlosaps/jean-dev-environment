@@ -1,0 +1,63 @@
+#!/bin/bash
+# =====================================================================
+# pre-push (AI guard) - global via core.hooksPath
+# ---------------------------------------------------------------------
+# Last line of defense before history leaves the machine. For every
+# commit about to be pushed, blocks when:
+#   - the message mentions an AI tool or still carries an AI trailer
+#     (commits made before the guard, rebases, cherry-picks...);
+#   - the message carries ANY Co-Authored-By (multiple authorship);
+#   - author or committer name/email matches an AI tool or bot.
+# Then chains to the repository's own pre-push, re-feeding the original
+# stdin so corporate hooks see the exact same ref lines.
+# Never rewrites anything. Args: $1 remote, $2 url. Stdin: ref pairs.
+# =====================================================================
+set -u
+
+HOOK_DIR=$(cd -P "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)
+# shellcheck source=lib/ai-guard.sh
+. "$HOOK_DIR/lib/ai-guard.sh"
+
+ZERO=0000000000000000000000000000000000000000
+input=$(cat)
+
+if ! ai_guard_maintenance && [ -n "$input" ]; then
+  bad=""
+  while read -r local_ref local_sha remote_ref remote_sha; do
+    [ -n "${local_sha:-}" ] || continue
+    [ "$local_sha" = "$ZERO" ] && continue   # deleting a remote ref
+    if [ "$remote_sha" = "$ZERO" ]; then
+      range=$(git rev-list "$local_sha" --not --remotes 2>/dev/null)
+    else
+      range=$(git rev-list "$remote_sha..$local_sha" 2>/dev/null)
+    fi
+    for sha in $range; do
+      msg=$(git log -1 --format=%B "$sha")
+      ident=$(git log -1 --format='%an <%ae>%n%cn <%ce>' "$sha")
+      why=""
+      [ -n "$(ai_guard_violations "$msg")" ] && why="menção a IA"
+      [ -z "$why" ] && printf '%s\n' "$msg" | grep -qiE "$AI_GUARD_STRIP_RE" && why="trailer de IA"
+      [ -z "$why" ] && [ -n "$(ai_guard_coauthor_violations "$msg")" ] && why="coautoria"
+      [ -z "$why" ] && printf '%s\n' "$ident" | grep -qiE "$AI_GUARD_IDENT_RE" && why="autor/committer bot ou ferramenta"
+      if [ -n "$why" ]; then
+        bad="$bad
+  $(git log -1 --format='%h %s' "$sha")  [$why]"
+      fi
+    done
+  done <<EOF
+$input
+EOF
+  if [ -n "$bad" ]; then
+    ai_guard_block_message pre-push \
+      "commits inválidos no push (reescreva com rebase -i / amend)" "$bad"
+    exit 1
+  fi
+fi
+
+gitdir=$(git rev-parse --absolute-git-dir 2>/dev/null)
+repo_hook="$gitdir/hooks/pre-push"
+if [ -n "$gitdir" ] && [ -x "$repo_hook" ]; then
+  printf '%s\n' "$input" | "$repo_hook" "$@"
+  exit $?
+fi
+exit 0
