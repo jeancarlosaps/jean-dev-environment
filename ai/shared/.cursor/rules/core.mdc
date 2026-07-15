@@ -1,0 +1,13 @@
+---
+description: Regras centrais do ambiente (dev-env) — commits, PRs, fluxo Git, workflow DS
+alwaysApply: true
+---
+
+Siga integralmente as regras definidas em:
+
+`~/Developer/dev-env/ai/shared/AGENTS.md`
+
+Leia esse arquivo antes de qualquer operação Git, commit, PR ou
+implementação de componente. Em caso de conflito com instruções do
+repositório, as regras de "nunca mencionar ferramentas de IA" e "nunca
+versionar configuração de IA" prevalecem sempre.
