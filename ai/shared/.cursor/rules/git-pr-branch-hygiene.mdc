@@ -1,0 +1,64 @@
+---
+description: Auditoria obrigatória de branch antes de qualquer commit final ou PR
+alwaysApply: true
+---
+
+# Git Branch Hygiene — Pré-PR e Pré-Commit
+
+Antes de abrir PR ou gerar commits finais, execute obrigatoriamente as etapas abaixo.
+
+## 1. Identificar a branch principal do projeto
+
+Antes de qualquer análise, descubra qual é a branch principal do repositório atual:
+
+```bash
+git remote show origin | grep "HEAD branch"
+```
+
+Use o resultado como `<BASE>` nos comandos seguintes. Os valores possíveis são `dev`, `develop` ou `development` — nunca assuma sem verificar.
+
+## 2. Identificar a base da branch
+
+```bash
+git merge-base HEAD origin/<BASE>
+git log --oneline --graph origin/<BASE>...HEAD
+git diff --stat origin/<BASE>...HEAD
+```
+
+## 3. Verificar a origem da branch
+
+- Confirme se a branch foi criada diretamente de `<BASE>`.
+- Se foi criada a partir de outra feature branch, identifique quais commits pertencem ao escopo atual e quais são herdados.
+
+## 4. Corrigir cadeia de commits se necessário
+
+Se existirem commits de outros componentes no histórico, use `rebase --onto` para isolar apenas os commits do escopo atual:
+
+```bash
+git rebase --onto origin/<BASE> <primeiro-commit-fora-do-escopo>^ HEAD
+```
+
+❌ Nunca use `git restore` ou `git revert` para mascarar arquivos de outro escopo — isso polui o histórico.
+
+## 5. Validação obrigatória antes do push
+
+```bash
+git diff --name-only origin/<BASE>...HEAD
+git diff --stat origin/<BASE>...HEAD
+```
+
+**O resultado deve conter somente arquivos do escopo da feature atual.**
+
+Se aparecer qualquer arquivo de outro componente:
+1. Interrompa a execução.
+2. Apresente um diagnóstico listando os arquivos fora do escopo.
+3. Aguarde instrução antes de prosseguir.
+
+## Resumo dos gates
+
+| Gate | Comando | Critério de aprovação |
+|---|---|---|
+| Branch principal | `git remote show origin \| grep "HEAD branch"` | Detectar `dev`, `develop` ou `development` |
+| Base correta | `git merge-base HEAD origin/<BASE>` | Deve apontar para HEAD de `<BASE>` |
+| Histórico limpo | `git log --graph origin/<BASE>...HEAD` | Apenas commits do escopo |
+| Diff de arquivos | `git diff --name-only origin/<BASE>...HEAD` | Zero arquivos fora do escopo |
