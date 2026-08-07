@@ -754,6 +754,25 @@ que é notificação? Se a resposta não for óbvia, o loop já está no projeto
 
 ---
 
+## Observação
+
+Durante investigações de problemas de foco ou interação, validar primeiro onde
+realmente está a autoridade do estado.
+
+Nesta sequência de correções foram encontrados casos em que o sintoma aparecia
+em um componente, mas a causa estava em outro ponto da hierarquia ou em
+diferenças de contrato entre componentes equivalentes.
+
+Antes de alterar um componente:
+
+- confirmar quem controla o estado;
+- validar a cadeia completa de eventos;
+- identificar se a causa está no componente ou em um primitivo compartilhado.
+
+Isso evita correções locais para problemas sistêmicos e reduz regressões.
+
+---
+
 ## Referências
 
 - `Sources/BradsCore/Layout/Input/Base/InputTransformedTextField.swift`
@@ -762,3 +781,454 @@ que é notificação? Se a resposta não for óbvia, o loop já está no projeto
 - Contraparte Android: `layout/input/base/InputBase.kt` — no Compose a máscara é
   `VisualTransformation` no próprio `BasicTextField`: mesmo widget, mesma
   medição, foco com dono único.
+
+---
+
+# HUG vs FIXED em slots UIKit (UIStackView + Auto Layout)
+
+## Confidence
+
+🟢 Validado em produção
+
+---
+
+## Contexto
+
+O Leading Item do `List Action` apresentava espaçamento maior que o especificado
+no Figma. A primeira hipótese foi remover apenas o `width == 48` do container,
+assumindo que isso faria o slot "abraçar" o conteúdo (HUG). O resultado piorou
+o layout.
+
+---
+
+## Investigação
+
+Medições em runtime mostraram:
+
+- slot FIXED 48 → gap visual de aproximadamente 40pt;
+- removendo apenas o width → container expandiu para ~256pt;
+- o texto foi comprimido pelo Auto Layout.
+
+Ou seja: remover a constraint fixa não produziu HUG — o container passou a
+absorver espaço disponível.
+
+---
+
+## Causa raiz
+
+Remover apenas a constraint fixa **não** produz comportamento HUG.
+
+O `leadingSlotContainer` é um `UIView` sem `intrinsicContentSize`. Dentro de um
+`UIStackView(distribution = .fill)`, sem constraints que fechem a largura ao
+conteúdo, o container absorve o espaço disponível.
+
+HUG no Figma não significa simplesmente remover `width == constant`.
+
+---
+
+## Solução adotada
+
+Fechar completamente a geometria do container:
+
+- remover apenas as constraints fixas do Leading;
+- prender o conteúdo nas quatro bordas do container;
+- ajustar corretamente Content Hugging e Compression Resistance.
+
+Somente essa combinação reproduziu o comportamento esperado no Figma.
+
+---
+
+## Lições aprendidas
+
+- HUG ≠ "tirar o width".
+- `UIView` sem `intrinsicContentSize` + `UIStackView.fill` tende a expandir.
+- Validar em runtime com largura expandida (`fillWidth`), além de
+  `systemLayoutSizeFitting(.compressed)`.
+
+---
+
+## Recomendações futuras
+
+Sempre que um componente precisar reproduzir HUG do Figma em UIKit:
+
+- nunca assumir que basta remover `width == constant`;
+- validar `intrinsicContentSize`;
+- validar Content Hugging;
+- validar Compression Resistance;
+- validar `UIStackView.distribution`;
+- validar se existem constraints suficientes para fechar completamente o
+  tamanho do container;
+- validar em runtime com `fillWidth` e `systemLayoutSizeFitting(.compressed)`.
+
+---
+
+## Referências
+
+- PR: https://github.com/raio-work/liquid-design-system-ios/pull/114
+- Arquivos: `Sources/BradsCoreUIKit/Components/ListAction/BdsUIListAction.swift`
+- Testes: `Tests/BdsCoreTests/UIKit/BdsUIListActionTests.swift`
+
+---
+
+# Paridade de acessibilidade entre UIKit e SwiftUI
+
+## Confidence
+
+🟢 Validado em produção
+
+---
+
+## Contexto
+
+Durante investigação de VoiceOver verbalizando nomes técnicos de ícone
+(`System Interface Image` / família `system_*`), ficou claro que UIKit e SwiftUI
+implementavam contratos diferentes para componentes equivalentes.
+
+SwiftUI (`BradsIcon` / `BradsIconShape`) tratava ícones como decorativos por
+padrão. UIKit (`BradsUIIcon` / `BradsUIIconShape`) sempre expunha o ícone ao
+VoiceOver e gerava automaticamente um `accessibilityLabel` técnico a partir do
+enum.
+
+---
+
+## Investigação
+
+- A divergência estava no primitivo UIKit (`BradsUIIcon`), não no Shortcut
+  SwiftUI (que já agrupava corretamente).
+- Diversos consumidores compostos já forçavam `isAccessibilityElement = false`
+  no ícone — compensando um contrato incorreto do primitivo.
+- Nenhum uso interno comprovou necessidade de verbalizar o nome técnico do enum;
+  o significado fica no pai ou em `accessibilityLabel` explícito.
+
+---
+
+## Causa raiz
+
+Contrato de acessibilidade inconsistente entre camadas equivalentes do DS. A
+correção precisa acontecer no primitivo compartilhado, nunca distribuída em
+workarounds por componente.
+
+---
+
+## Solução adotada
+
+Alinhar UIKit ao contrato SwiftUI no primitivo:
+
+- default decorativo (`isAccessibilityElement = false` sem label);
+- `accessibilityLabel` opt-in;
+- sem gerar label técnica automaticamente a partir do enum;
+- `BradsUIIconShape` só expõe elemento quando há label própria;
+- `accessibilityLabelText` como fonte única de verdade; `UIView.accessibilityLabel`
+  apenas como alias/forward.
+
+---
+
+## Lições aprendidas
+
+- Sintoma em consumidor composto pode nascer de primitivo com contrato errado.
+- Workarounds locais em List/Checkbox/Switch/etc. mascaram drift de paridade.
+- Paridade de acessibilidade entre UIKit e SwiftUI é parte do contrato do
+  componente, não um detalhe de implementação.
+
+---
+
+## Recomendações futuras
+
+Para componentes equivalentes entre UIKit e SwiftUI:
+
+- definir primeiro o contrato de acessibilidade;
+- garantir paridade entre as duas implementações;
+- ícones decorativos devem permanecer ocultos do VoiceOver por padrão;
+- somente expor o elemento quando houver um `accessibilityLabel` explícito;
+- nunca gerar automaticamente labels a partir de enums, nomes internos ou
+  identificadores técnicos;
+- corrigir no primitivo; não espalhar workarounds nos consumidores.
+
+---
+
+## Referências
+
+- PR: https://github.com/raio-work/liquid-design-system-ios/pull/115
+- Arquivos:
+  `Sources/BradsCoreUIKit/Components/Icon/BdsIcon.swift`,
+  `Sources/BradsCoreUIKit/Components/IconShape/BdsUIIconShape.swift`
+- Testes:
+  `Tests/BdsCoreTests/UIKit/BdsUIIconTests.swift`,
+  `Tests/BdsCoreTests/UIKit/BdsUIIconShapeTests.swift`
+- Relacionado: learning de inspeção AX via LLDB (mesmo documento).
+
+---
+
+# BottomSheet — Ordenação de acessibilidade no VoiceOver (SwiftUI)
+
+## Confidence
+
+🟢 Validado em produção
+
+---
+
+## Contexto
+
+Durante a implementação da acessibilidade do Bottom Sheet foi identificado
+que a ordem de navegação do VoiceOver dependia da estrutura da árvore
+SwiftUI. O botão Fechar não possuía um contrato explícito de ordenação e,
+dependendo da composição do conteúdo, deixava de ser o último elemento
+navegável.
+
+Além disso, o componente utilizava um `Text("Drawer")` / `Text("Drawer fechar")`
+invisível (`foregroundColor(.clear)`) apenas como âncora para
+`AccessibilityFocusState`. Embora invisível visualmente, esse `Text`
+permanecia presente na árvore de acessibilidade e era verbalizado pelo
+VoiceOver.
+
+---
+
+## Investigação
+
+Spikes e dumps da árvore de acessibilidade (Drawer SM e SuperDrawer LG)
+mostraram:
+
+- a ordem automática do SwiftUI colocava Fechar cedo demais (Heading →
+  Fechar → fantasma), antes do conteúdo;
+- `accessibilitySortPriority` reordena corretamente a navegação do
+  VoiceOver;
+- `AccessibilityFocusState` controla apenas o foco inicial, não a ordem
+  de swipe;
+- em prioridades iguais, o SwiftUI volta à ordem estrutural da árvore;
+- `Text(...).foregroundColor(.clear)` continua presente na árvore de
+  acessibilidade e pode ser verbalizado;
+- a remoção do elemento fantasma manteve a árvore correta nos testes.
+
+Android já usava `traversalIndex` (título `0`, conteúdo `1`, close
+`Float.MAX_VALUE`). No iOS a API equivalente é `accessibilitySortPriority`,
+com semântica invertida.
+
+---
+
+## Causa raiz
+
+Não confiar na ordem estrutural (`VStack`, `HStack`, ordem de declaração
+das views) para definir a sequência de navegação do VoiceOver em
+componentes complexos.
+
+Também evitar elementos invisíveis (`Text(...).foregroundColor(.clear)`)
+como âncoras de foco: eles continuam sendo elementos de acessibilidade e
+podem ser anunciados ao usuário.
+
+---
+
+## Solução adotada
+
+Contrato explícito de navegação via `accessibilitySortPriority`
+(`BottomSheetAccessibilitySortPriority`):
+
+1. Heading (`100`)
+2. Conteúdo (`50`)
+3. FixedBar (`25`, quando existir)
+4. Botão Fechar (`0`)
+
+O foco inicial passou a utilizar o próprio elemento semântico (Heading),
+eliminando o `Text` auxiliar invisível. API pública inalterada.
+
+---
+
+## Lições aprendidas
+
+Para componentes SwiftUI do Design System:
+
+- definir explicitamente a ordem de navegação quando houver um contrato
+  funcional de acessibilidade;
+- utilizar `accessibilitySortPriority` em vez de depender da ordem
+  natural da árvore;
+- utilizar `AccessibilityFocusState` apenas para posicionar o foco
+  inicial;
+- nunca utilizar elementos invisíveis como solução permanente para foco
+  de acessibilidade.
+
+---
+
+## Recomendações futuras
+
+- Reutilizar o contrato `Heading → Conteúdo → FixedBar → Fechar` em
+  futuros Bottom Sheets / drawers do DS.
+- Ao espelhar comportamento Android ↔ iOS, alinhar a experiência do
+  usuário, não os valores numéricos das APIs.
+- Validar ordem com dump da árvore de acessibilidade (SM e LG), além do
+  Sample.
+
+---
+
+## Observação
+
+A API equivalente no Android utiliza `traversalIndex`, porém a semântica
+é diferente:
+
+- Android: valores maiores → navegados por último (`Float.MAX_VALUE`).
+- iOS (`accessibilitySortPriority`): valores maiores → navegados primeiro.
+
+Ao manter paridade entre plataformas, alinhar o comportamento esperado
+pelo usuário, e não os valores utilizados pelas APIs.
+
+---
+
+## Referências
+
+- PR: https://github.com/raio-work/liquid-design-system-ios/pull/116
+- Arquivos:
+  `Sources/BradsCore/Components/Containers/BottomSheet/Base/BottomSheetAccessibilitySortPriority.swift`,
+  `Sources/BradsCore/Components/Containers/BottomSheet/Base/DrawerHeader.swift`,
+  `Sources/BradsCore/Components/Containers/BottomSheet/Base/Drawer.swift`,
+  `Sources/BradsCore/Components/Containers/BottomSheet/Base/SuperDrawer.swift`
+- Relacionado: learning de inspeção AX via LLDB (mesmo documento);
+  learning de Window Metrics / Keyboard do BottomSheet (mesmo documento).
+
+---
+
+# Evolução da API UIKit da família List (`BradsUIListContentProps`)
+
+## Confidence
+
+🟡 Validado em laboratório / POC
+
+Implementação concluída, suíte completa verde (1946 testes) e PRs stacked
+revisadas/mergeadas em `feat/list-api-evolution`. A PR final para `develop`
+ainda estava em revisão no momento deste registro.
+
+---
+
+## Contexto
+
+A iniciativa SonarQube no Design System iOS apontou violações de S107
+(Functions should not have too many parameters) nos inits/updates de
+`BradsUIListContent`, `BradsUIListAction` e `BradsUIListSelect`. Além do
+métrico, as APIs multi-parâmetro e o contrato tri-state (`String??` /
+`UIView??`) dificultavam manutenção e geravam duplicação de contrato entre
+componentes que compartilhavam o mesmo núcleo visual de conteúdo bicoluna.
+
+A evolução também absorveu, na mesma frente, os apontamentos anteriores de
+One statement per line e Duplicated Lines (New Code) no `ListAction`.
+
+---
+
+## Investigação
+
+Foram avaliadas alternativas clássicas para reduzir parâmetros:
+
+- Config
+- Builder
+- ViewModel
+- Parameter Object genérico / bag opaco
+
+Todas foram descartadas. Config/Builder/ViewModel introduzem superfície
+pública desnecessária, mudam o modelo mental de consumo e não resolvem o
+problema de domínio (o que é compartilhado vs o que é específico). Parameter
+Object genérico sem contrato tipado apenas esconde a quantidade de campos.
+
+A conclusão foi adotar um **Props de domínio compartilhado** — value-type
+explícito, limitado ao núcleo realmente comum — e preservar slots, callbacks
+e estados específicos fora desse objeto.
+
+Também foi investigado se `BradsUIListCurrency` deveria entrar no mesmo
+contrato. Conclusão: não. Currency é domínio especializado (texto + moeda
+obrigatória + avatar tipado), distinto do núcleo polimórfico
+texto/moeda bicoluna + slots genéricos.
+
+---
+
+## Causa raiz
+
+Content, Action e Select compartilhavam o mesmo núcleo de conteúdo
+(`type`, paragraphs, supports, `linePosition`), porém expunham APIs
+independentes com muitos parâmetros e updates parciais baseados em
+tri-state. Isso gerava:
+
+- duplicação de contrato;
+- violações de S107;
+- superfície pública difícil de evoluir de forma consistente.
+
+---
+
+## Solução adotada
+
+Criação de `BradsUIListContentProps` e migração dos três componentes para:
+
+- `init(content:...)`
+- `update(content:)`
+
+Regras do contrato:
+
+- slots permanecem fora do Props (`setLeadingItem` / `setTrailingItem`);
+- callbacks permanecem fora do Props (`onPress`, `onValueChanged`);
+- estados específicos permanecem fora do Props (`selected`, `disabled`,
+  `inputType`);
+- `update(content:)` é substituição atômica do núcleo de conteúdo, com
+  `isBatchUpdating` — não é patch nem tri-state.
+
+### Componentes impactados
+
+- `BradsUIListContent`
+- `BradsUIListAction`
+- `BradsUIListSelect`
+
+### Sonar
+
+- S107 eliminado nos três componentes migrados (init ≤ 7 params; update = 1).
+- One statement per line e Duplicated Lines (New Code) tratados anteriormente
+  na mesma iniciativa (`ListAction`).
+
+### Decisão arquitetural — Currency fora do escopo
+
+`BradsUIListCurrency` **não** participou desta evolução.
+
+Motivo: após investigação, concluiu-se que representa domínio especializado
+(texto + moeda + avatar), diferente do núcleo compartilhado Content/Action/Select.
+
+Se for evoluído no futuro, deve usar um `BradsUIListCurrencyProps` próprio,
+em iniciativa independente — sem forçar `BradsUIListContentProps`.
+
+---
+
+## Lições aprendidas
+
+- Nem toda violação do Sonar deve ser resolvida da mesma forma: métrica sem
+  domínio correto gera API artificial.
+- O domínio do componente deve guiar a arquitetura, não o apontamento isolado.
+- Props compartilhados devem representar apenas estado realmente compartilhado.
+- Padronizar APIs da mesma família reduz complexidade e melhora manutenção.
+- Especialização (Currency) ≠ inconsistência: fora do Props compartilhado
+  quando o domínio é outro.
+
+---
+
+## Recomendações futuras
+
+- Futuras evoluções da família List devem reutilizar
+  `BradsUIListContentProps` quando o domínio for o mesmo núcleo bicoluna
+  polimórfico + slots genéricos.
+- Componentes especializados devem possuir seus próprios Props.
+- Não reintroduzir tri-state / patch multi-parâmetro no núcleo migrado.
+- Não colocar `UIView`, callbacks ou estado específico dentro do Props
+  compartilhado.
+
+---
+
+## Referências
+
+- PRs stacked (base `feat/list-api-evolution`):
+  - https://github.com/raio-work/liquid-design-system-ios/pull/121
+  - https://github.com/raio-work/liquid-design-system-ios/pull/122
+  - https://github.com/raio-work/liquid-design-system-ios/pull/123
+  - https://github.com/raio-work/liquid-design-system-ios/pull/124
+- PR final da iniciativa:
+  - https://github.com/raio-work/liquid-design-system-ios/pull/125
+- Sample:
+  - https://github.com/raio-work/liquid-sample-ios/pull/42
+- Arquivos:
+  - `Sources/BradsCoreUIKit/Components/ListContent/BradsUIListContentProps.swift`
+  - `Sources/BradsCoreUIKit/Components/ListContent/BdsUIListContent.swift`
+  - `Sources/BradsCoreUIKit/Components/ListAction/BdsUIListAction.swift`
+  - `Sources/BradsCoreUIKit/Components/ListSelect/BdsUIListSelect.swift`
+- Docs:
+  - `docs/lists/ListContent.md`
+  - `docs/lists/ListAction.md`
+  - `docs/lists/ListSelect.md`
