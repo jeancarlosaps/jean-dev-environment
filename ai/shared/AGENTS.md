@@ -37,6 +37,10 @@ histórico, autoria, trailers, bots, GitHub Apps, mensagens,
 descrições, comentários automáticos.
 
 - Aplica-se a **todos** os repositórios, corporativos e pessoais.
+- Escopo: os **artefatos de trabalho** produzidos em repositórios
+  consumidores. O próprio Jean Dev Environment documenta agentes,
+  automação e engenharia assistida por IA — esse é o assunto do
+  projeto, não evidência de participação em um trabalho de terceiro.
 - Vale para ferramentas atuais e **futuras**: Claude, Cursor, ChatGPT,
   Copilot, OpenAI, Anthropic, Gemini, Codeium, Continue, Cline,
   Roo Code, Windsurf, DeepSeek, Qwen, Codex e similares.
