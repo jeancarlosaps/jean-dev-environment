@@ -33,16 +33,15 @@ defaults:
 
 profiles:
   default:
-    profileVersion: 1
+    profileVersion: 2
     links:
+      - source: ai/shared/AGENTS.md
+        target: AGENTS.md
+        conflict: skip
       - source: ai/shared/.claude
         target: .claude
-      - source: ai/shared/.agents
-        target: .agents
       - source: ai/shared/.cursor
         target: .cursor
-      - source: ai/shared/_bmad
-        target: _bmad
 
   swift:
     extends: default
