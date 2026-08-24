@@ -44,6 +44,23 @@ _link_mutate() {
   fi
 }
 
+# Report a mutation that ACTUALLY happened. Success messages and
+# counters describe real side effects only, so under --dry-run this is a
+# no-op: the mutation itself was already announced by _link_mutate as the
+# exact command it would run, and the final report can never be mistaken
+# for a real run.
+#   _link_done <created|repaired|backed_up> <message>
+_link_done() {
+  local what="$1"; shift
+  [ "${DRY_RUN:-0}" = "1" ] && return 0
+  case "$what" in
+    created)   LOG_CREATED=$((LOG_CREATED + 1)) ;;
+    repaired)  LOG_REPAIRED=$((LOG_REPAIRED + 1)) ;;
+    backed_up) LOG_BACKED_UP=$((LOG_BACKED_UP + 1)) ;;
+  esac
+  log_ok "$*"
+}
+
 # Resolve a path to its canonical absolute physical path.
 # Follows the full symlink chain, then canonicalizes the parent dir
 # with pwd -P. Pure bash 3.2 + readlink/cd/pwd (macOS standard tools).
@@ -99,8 +116,7 @@ _link_backup() {
 
   _link_mutate mkdir -p "$dir"
   _link_mutate mv "$path" "$dest"
-  LOG_BACKED_UP=$((LOG_BACKED_UP + 1))
-  log_ok "🛟 backed up $path -> ${dest#$root/}"
+  _link_done backed_up "🛟 backed up $path -> ${dest#$root/}"
 }
 
 # Create the symlink (ensures the parent directory exists first).
@@ -156,8 +172,7 @@ link_apply() {
     # symlink destroys no real data, so no backup is needed)
     _link_mutate rm -f "$target"
     _link_create "$source" "$target"
-    log_ok "♻️  recreated link: $target_display -> $source"
-    LOG_REPAIRED=$((LOG_REPAIRED + 1))
+    _link_done repaired "♻️  recreated link: $target_display -> $source"
     return 0
   fi
 
@@ -177,8 +192,7 @@ link_apply() {
       backup)
         _link_backup "$target"
         _link_create "$source" "$target"
-        log_ok "🔗 linked (after backup): $target_display -> $source"
-        LOG_CREATED=$((LOG_CREATED + 1))
+        _link_done created "🔗 linked (after backup): $target_display -> $source"
         return 0
         ;;
       *)
@@ -191,7 +205,6 @@ link_apply() {
 
   # --- Case 4: nothing at target -----------------------------------
   _link_create "$source" "$target"
-  log_ok "🔗 linked: $target_display -> $source"
-  LOG_CREATED=$((LOG_CREATED + 1))
+  _link_done created "🔗 linked: $target_display -> $source"
   return 0
 }
