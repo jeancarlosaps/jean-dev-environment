@@ -13,6 +13,7 @@ Todo agente deve:
 2. Ler a investigação antes de propor qualquer implementação.
 3. Não assumir que um aprendizado antigo continua válido sem verificar sua evolução.
 4. Atualizar um aprendizado existente sempre que ele evoluir, em vez de criar um documento duplicado.
+5. Registrar a **regra** resultante no `AGENTS.md` e manter aqui apenas o **aprendizado** e suas evidências.
 
 > Este documento complementa as regras do projeto.
 > Ele registra decisões arquiteturais e aprendizados obtidos durante investigações reais.
@@ -73,6 +74,55 @@ Tudo na mesma entrada. **Não** criar:
 
 ---
 
+# Decision → Rule → Learning
+
+Todo aprendizado nasce de uma investigação e se divide em três artefatos
+com donos distintos:
+
+```
+Investigação
+↓
+Decision
+↓
+Rule
+↓
+Learning
+```
+
+Este documento é o dono da etapa **Learning**: o que aprendemos e quais
+evidências sustentam a conclusão. A **Decision** mora na investigação ou
+na PR; a **Rule** mora no `AGENTS.md` (seção *Decision → Rule →
+Learning*), que define o método completo.
+
+**Não duplicar o mesmo texto nos três lugares.** Cada etapa tem um dono;
+as outras apenas referenciam.
+
+---
+
+# Estrutura mínima de uma entrada
+
+Toda entrada deve conter, quando aplicável:
+
+- **Confidence** — nível declarado conforme a seção acima.
+- **Contexto** — o que estava sendo feito e onde.
+- **Investigação** — hipóteses consideradas e experimentos realizados.
+- **Causa raiz** — a explicação comprovada, não o sintoma.
+- **Hipóteses descartadas** — o que foi testado e não se confirmou, e por
+  quê. Evita que a mesma trilha seja percorrida de novo.
+- **Solução adotada** — a decisão efetiva.
+- **Evidência objetiva** — testes, logs, métricas, benchmark, warnings
+  antes/depois, screenshots. Nunca apenas "testado e funcionando".
+- **Lacunas** — o que continua desconhecido ou não validado.
+- **Lições aprendidas** e **Recomendações futuras**.
+- **Referências**.
+
+Separar sempre **fato**, **hipótese**, **inferência** e **decisão**.
+Nunca apresentar inferência como fato.
+
+Um workaround não encerra a entrada: enquanto a causa raiz não estiver
+comprovada, a `Confidence` permanece baixa e a lacuna fica registrada.
+
+---
 # BottomSheet — Window Metrics e Keyboard Handling
 
 ## Contexto
