@@ -74,7 +74,8 @@ ai_guard_violations() {
 # ai_guard_coauthor_violations <text>
 # Any Co-Authored-By that survived the strip (i.e. not an AI one) still
 # creates a second author on GitHub ("X and Y committed"). Multiple
-# authorship is blocked by default; explicit request = AI_GUARD_SKIP=1.
+# authorship is always blocked here; the only bypass is the environment's
+# maintenance mode (AI_GUARD_MAINTENANCE=1), checked by the hooks.
 ai_guard_coauthor_violations() {
   printf '%s\n' "$1" |
     awk '/^# -+ >8 -+/ { exit } !/^#/ { print }' |
