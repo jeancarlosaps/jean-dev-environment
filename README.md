@@ -16,11 +16,10 @@ configuração — ele remove o link, o conteúdo continua intacto no
 ~/Developer/
 ├── Projects/
 │   └── <cliente>/
-│       ├── .claude   ─┐
-│       ├── .agents    │  (symlinks — ignorados pelo git,
-│       ├── .cursor    │   recriáveis a qualquer momento)
-│       ├── _bmad      │
-│       └── .mcp.json ─┘
+│       ├── AGENTS.md  ─┐
+│       ├── .claude     │  (symlinks — ignorados pelo git,
+│       ├── .cursor     │   recriáveis a qualquer momento)
+│       └── .mcp.json  ─┘
 │
 └── dev-env  ──►  Projects/jean-dev-environment   (symlink mestre estável)
 ```
@@ -28,7 +27,6 @@ configuração — ele remove o link, o conteúdo continua intacto no
 - **`~/Developer/dev-env`** é um symlink mestre para este repositório.
   É o caminho estável que todos os projetos referenciam.
 - **`ai/shared/`** guarda o conteúdo compartilhado entre projetos.
-- **`ai/profiles/`** guarda variações por perfil.
 - Um **manifesto declarativo** (`manifest/links.yaml`) descreve quais
   links cada projeto recebe.
 - Um **CLI** (`dev-env`) cria, migra, valida, audita e repara tudo de
@@ -42,14 +40,14 @@ configuração — ele remove o link, o conteúdo continua intacto no
 jean-dev-environment/            (= ~/Developer/dev-env)
 ├── bin/dev-env                  # CLI
 ├── manifest/links.yaml          # manifesto declarativo dos symlinks
-├── ai/
-│   ├── shared/                  # fonte da verdade compartilhada
-│   │   ├── .agents  .claude  .cursor  _bmad
-│   │   ├── mcp/                 # perfis de MCP (ex.: swift.json)
-│   │   ├── prompts  snippets  templates
-│   │   └── knowledge  docs
-│   └── profiles/                # overrides por perfil (futuro)
+├── ai/shared/                   # fonte da verdade compartilhada
+│   ├── AGENTS.md                # regras compartilhadas (arquivo dono)
+│   ├── .agents  .claude  .cursor  _bmad
+│   ├── mcp/                     # perfis de MCP (ex.: swift.json)
+│   ├── prompts  snippets  templates
+│   └── knowledge  docs
 ├── bootstrap/                   # implementação do CLI (comandos + libs)
+├── git/hooks/                   # AI Guard (core.hooksPath global)
 ├── scripts/mac-dev-setup.sh     # setup de máquina (zsh) — ver no fim
 ├── state/                       # registro dos projetos (por máquina)
 └── backups/                     # backups timestamped (por máquina)
@@ -71,7 +69,10 @@ O `init` é idempotente e faz:
 2. garante a estrutura `ai/shared/`;
 3. valida o manifesto;
 4. configura o git ignore global (`~/.config/git/ignore`);
-5. adiciona `dev-env/bin` ao `PATH` (bloco delimitado no `~/.zshrc`).
+5. avisa se um `core.excludesfile` legado anula esse ignore;
+6. adiciona `dev-env/bin` ao `PATH` (bloco delimitado no `~/.zshrc`);
+7. aponta o `core.hooksPath` global para `git/hooks` (AI Guard);
+8. autoriza este repositório a versionar os próprios artefatos de IA.
 
 Abra um novo shell e o comando `dev-env` fica disponível de qualquer
 lugar.
@@ -199,16 +200,15 @@ defaults:
 
 profiles:
   default:
-    profileVersion: 1
+    profileVersion: 2
     links:
+      - source: ai/shared/AGENTS.md
+        target: AGENTS.md
+        conflict: skip        # projeto com AGENTS.md próprio tem prioridade
       - source: ai/shared/.claude
         target: .claude
-      - source: ai/shared/.agents
-        target: .agents
       - source: ai/shared/.cursor
         target: .cursor
-      - source: ai/shared/_bmad
-        target: _bmad
 
   swift:
     extends: default            # herda os links do default
@@ -231,8 +231,9 @@ profiles:
 
 ## 🎛️ Perfis (`default`, `swift`)
 
-- **`default`** — o conjunto compartilhado por todo projeto (`.claude`,
-  `.agents`, `.cursor`, `_bmad`).
+- **`default`** — o conjunto compartilhado por todo projeto: o
+  `AGENTS.md` na raiz (convenção lida por diversos agentes) mais os
+  adapters `.claude` e `.cursor`, que apenas apontam para ele.
 - **`swift`** — `extends: default` e acrescenta o `.mcp.json` do perfil
   Swift.
 
@@ -253,7 +254,11 @@ sentido). O perfil usado por cada projeto fica gravado no registro, então
 - **Nunca faz merge automático** — conflito de migração para na hora e
   reporta.
 - **`--dry-run` disponível** — em toda operação mutável; mostra
-  exatamente o que aconteceria, sem tocar em nada.
+  exatamente o que aconteceria, sem tocar em nada, e o relatório final
+  é marcado como `DRY RUN`.
+- **AI Guard** — hooks git globais (`git/hooks/`, ativados pelo `init`)
+  mantêm o histórico livre de trailers, coautoria e artefatos de IA. A
+  política é definida em `ai/shared/AGENTS.md`.
 
 ---
 
@@ -267,14 +272,19 @@ verdade é um arquivo só:
 ai/shared/AGENTS.md
 ```
 
-Todos os demais pontos de entrada apenas **apontam** para ele — nunca
-duplicam regra:
+O perfil `default` instala esse arquivo como `AGENTS.md` na raiz do
+projeto — convenção lida por diversos agentes. Ferramentas com convenção
+própria recebem um adapter que apenas **aponta** para ele, nunca duplica
+regra:
 
 ```
-ai/shared/.claude/CLAUDE.md          ──┐
-ai/shared/.cursor/rules/core.mdc       ├──► ai/shared/AGENTS.md
-ai/shared/.cursor/rules/*.mdc        ──┘
+AGENTS.md (raiz do projeto)  ──────────┐
+.claude/CLAUDE.md                      ├──► ai/shared/AGENTS.md
+.cursor/rules/core.mdc                 ──┘
 ```
+
+Projeto que já tenha um `AGENTS.md` próprio não é sobrescrito: o link é
+`conflict: skip` e o arquivo local prevalece.
 
 O conhecimento técnico acumulado (investigações, causa raiz, evidências)
 mora separado, em `ai/shared/knowledge/engineering-learnings.md`.
