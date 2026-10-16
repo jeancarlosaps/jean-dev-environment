@@ -1232,3 +1232,95 @@ em iniciativa independente — sem forçar `BradsUIListContentProps`.
   - `docs/lists/ListContent.md`
   - `docs/lists/ListAction.md`
   - `docs/lists/ListSelect.md`
+
+---
+
+# `flutter analyze` falha em caminhos com caracteres não ASCII
+
+## Confidence
+
+🟡 **Validado em laboratório / POC**
+
+- Bug reproduzido em projeto mínimo e causa localizada no código do SDK.
+- Correção definitiva depende do upstream (Flutter); não validada.
+
+## Contexto
+
+Projeto Flutter (`dinna-flutter`) dentro de `~/Developer/Projects/PósMobile-UTFPR/…`.
+Flutter 3.47.7 stable / Dart 3.13.5, macOS arm64. `flutter analyze` abortava;
+`flutter test` e `dart format` funcionavam normalmente.
+
+Sintoma (stderr do analysis server):
+
+```
+FormatException: Unexpected end of input (at character N)
+...LspByteStreamServerChannel._readMessage (lsp_byte_stream_channel.dart:96)
+```
+
+## Investigação
+
+| Experimento | Resultado |
+|---|---|
+| Projeto mínimo em pasta `ascii/` → `flutter analyze` | `No issues found!` |
+| Mesmo projeto em pasta `acentó/` → `flutter analyze` | `FormatException: Unexpected end of input` |
+| Pasta `acentó/` → `dart analyze` | `No issues found!` |
+| Projeto real copiado para caminho ASCII → `flutter analyze` | Mesmo resultado de `dart analyze` no caminho original |
+
+**Fato:** a falha depende apenas de caractere não ASCII no caminho e só ocorre
+no `flutter analyze`.
+
+## Causa raiz
+
+**Fato** (código do SDK): `packages/flutter_tools/lib/src/dart/analysis.dart`
+
+```dart
+_process?.stdin.write('Content-Length: ${message.length}\r\n\r\n$message');
+```
+
+`String.length` conta unidades UTF-16; o protocolo LSP exige `Content-Length`
+em **bytes UTF-8**. O caminho do projeto vai no `initialize`
+(`rootUri`/`workspaceFolders`). Cada `ó` ocupa 1 unidade UTF-16 e 2 bytes
+UTF-8 → o header declara menos bytes do que o enviado → o servidor corta o JSON
+→ `Unexpected end of input`.
+
+`dart analyze` não passa por esse cliente LSP do `flutter_tools`, por isso não
+falha.
+
+## Hipóteses descartadas
+
+- **Projeto/código inválido:** descartado — projeto mínimo `void main() {}` reproduz.
+- **Cache corrompido / `pub get`:** descartado — reproduz em pasta recém-criada.
+- **Lints/`analysis_options.yaml`:** descartado — projeto mínimo não tem.
+
+## Solução adotada (workaround)
+
+- Localmente, em caminho com acento: `dart analyze --fatal-infos`
+  (mesmos diagnósticos para código Dart; inclui o `analysis_options.yaml`).
+- CI roda `flutter analyze --fatal-infos` normalmente (caminho ASCII no runner).
+- **Não** renomear pastas do usuário nem patchar o SDK para esconder a falha.
+
+## Lacunas
+
+- Não foi aberta/encontrada issue upstream (busca por termos óbvios em
+  `flutter/flutter` sem resultado). Correção esperada:
+  `utf8.encode(message).length`.
+- Não verificado em Linux/Windows; a causa é independente de SO (inferência).
+
+## Lições aprendidas
+
+- `FormatException: Unexpected end of input` em canal LSP indica, antes de tudo,
+  divergência entre `Content-Length` e bytes reais — suspeitar de texto não ASCII.
+- Isolar com projeto mínimo em dois caminhos (ASCII × não ASCII) prova a causa
+  em segundos.
+
+## Recomendações futuras
+
+- Ao criar projetos, preferir caminhos ASCII.
+- Ao atualizar o Flutter, reexecutar o experimento ASCII × `acentó/` antes de
+  remover o workaround da documentação do projeto.
+
+## Referências
+
+- `~/development/flutter/packages/flutter_tools/lib/src/dart/analysis.dart` (`_writeMessage`)
+- Projeto afetado: `jeancarlosaps/dinna-flutter` (README, seção de qualidade)
+
