@@ -1324,3 +1324,62 @@ falha.
 - `~/development/flutter/packages/flutter_tools/lib/src/dart/analysis.dart` (`_writeMessage`)
 - Projeto afetado: `jeancarlosaps/dinna-flutter` (README, seção de qualidade)
 
+---
+
+# TypeScript 7 incompatível com typescript-eslint 8
+
+## Confidence
+
+🟡 **Validado em laboratório / POC**
+
+- Restrição lida diretamente dos metadados do npm; projeto validado com TS 6.0.
+
+## Contexto
+
+Fundação do `dinna-api` (Node + Fastify) em 2026-10-16. `npm view typescript`
+retornava `latest: 7.0.2` (port nativo em Go). O lint usa `typescript-eslint`.
+
+## Investigação
+
+**Fato:** `npm view typescript-eslint@8.71.2 peerDependencies`
+
+```json
+{ "eslint": "^8.57.0 || ^9.0.0 || ^10.0.0", "typescript": ">=4.8.4 <6.1.0" }
+```
+
+Instalar `typescript@latest` (7.x) viola a peer dependency: o parser do
+typescript-eslint depende da API de compilador em JS, que o TS 7 não oferece
+da mesma forma (inferência a partir do range declarado).
+
+## Causa raiz
+
+`latest` do npm aponta para uma major que o ecossistema de lint ainda não
+suporta. Usar "a versão mais recente" sem checar peer deps quebra o lint.
+
+## Solução adotada
+
+- Fixar `typescript@6.0.3` (`--save-exact`) junto com `typescript-eslint@8.71.2`.
+- Validação: `npm run lint`, `npm run typecheck`, `npm test`, `npm run build`
+  verdes local e na CI (`jeancarlosaps/dinna-api`, run 38968386931).
+
+## Lacunas
+
+- Não testado se o typescript-eslint funciona "por acaso" com TS 7 ignorando o
+  peer; irrelevante enquanto o range oficial exclui a versão.
+
+## Lições aprendidas
+
+- Antes de escolher a versão de uma ferramenta central (TypeScript, Kotlin,
+  Swift), conferir `peerDependencies`/compatibilidade das ferramentas que
+  dependem dela — não apenas `dist-tags.latest`.
+
+## Recomendações futuras
+
+- Revisar o pin quando o typescript-eslint anunciar suporte a TS 7
+  (`npm view typescript-eslint peerDependencies`).
+
+## Referências
+
+- `npm view typescript-eslint peerDependencies`
+- `npm view typescript dist-tags`
+- Projeto: `jeancarlosaps/dinna-api` (`package.json`, README)
