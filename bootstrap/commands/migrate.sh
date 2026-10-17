@@ -22,7 +22,7 @@
 #
 # Globals from bin/dev-env: DEV_ENV_HOME DEV_ENV_STABLE MANIFEST
 #                           PROFILE STATE_DIR LINK_BACKUP_ROOT DRY_RUN
-# Depends on: log.sh, manifest.sh, link.sh (_link_run_ts), git.sh,
+# Depends on: log.sh, manifest.sh, link.sh (_link_run_ts, _link_done),
 #             project.sh (_project_register)
 # =====================================================================
 
@@ -58,8 +58,7 @@ _migrate_backup() {
   # -R recurse, -p preserve mode/timestamps/ownership (and, on macOS,
   # ACLs and extended attributes) so the backup is a faithful copy.
   mutate cp -Rp "$path" "$dest"
-  LOG_BACKED_UP=$((LOG_BACKED_UP + 1))
-  log_ok "🛟 backed up $path -> ${dest#$root/}"
+  _link_done backed_up "🛟 backed up $path -> ${dest#$root/}"
 }
 
 # Move real data into the (empty/absent) central location.
@@ -143,15 +142,19 @@ cmd_migrate() {
     fi
     _migrate_backup "$tgt"
     _migrate_move "$tgt" "$central"
-    moved=$((moved + 1))
-    log_ok "📦 moved $rel_tgt -> ai/${central#*/ai/}"
+    if [ "${DRY_RUN:-0}" != "1" ]; then
+      moved=$((moved + 1))
+      log_ok "📦 moved $rel_tgt -> ai/${central#*/ai/}"
+    fi
 
     # after the move the project slot is empty -> a plain link creation
     local parent; parent=$(dirname "$tgt")
     [ -d "$parent" ] || mutate mkdir -p "$parent"
     mutate ln -s "$src_stable" "$tgt"
-    linked=$((linked + 1))
-    log_ok "🔗 linked $rel_tgt -> $src_stable"
+    if [ "${DRY_RUN:-0}" != "1" ]; then
+      linked=$((linked + 1))
+      log_ok "🔗 linked $rel_tgt -> $src_stable"
+    fi
 
     i=$((i + 1))
   done
@@ -182,7 +185,11 @@ cmd_migrate() {
 
 _migrate_summary() {
   local moved="$1" linked="$2" conflicts="$3" ignored="$4"
-  printf '\n%s\n' "${LOG_C_BLUE}── migration summary ───────────────────${LOG_C_RESET}"
+  if [ "${DRY_RUN:-0}" = "1" ]; then
+    printf '\n%s\n' "${LOG_C_BLUE}── migration summary (DRY RUN — nothing was changed) ──${LOG_C_RESET}"
+  else
+    printf '\n%s\n' "${LOG_C_BLUE}── migration summary ───────────────────${LOG_C_RESET}"
+  fi
   printf '  moved:     %s\n' "$moved"
   printf '  linked:    %s\n' "$linked"
   if [ "$conflicts" -gt 0 ]; then
