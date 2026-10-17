@@ -99,6 +99,9 @@ while [ "$#" -gt 0 ]; do
   esac
   shift
 done
+case "$PROFILE" in
+  @*) log_error "reserved profile name: $PROFILE"; exit 2 ;;
+esac
 export DRY_RUN VERBOSE PROFILE
 
 [ -n "$COMMAND" ] || { usage; exit 0; }
