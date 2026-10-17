@@ -1,0 +1,105 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="720" viewBox="0 0 1600 720" role="img" aria-labelledby="title desc">
+  <title id="title">dev-env — Configure uma vez. Todo projeto herda.</title>
+  <desc id="desc">Painel de controle do Jean Dev Environment. Um núcleo central, ~/Developer/dev-env, conectado aos quatro módulos reais do repositório: manifest/links.yaml, ai/shared/AGENTS.md, git/hooks e o CLI bin/dev-env. Do núcleo sai uma ligação para um projeto, que recebe os symlinks AGENTS.md, .claude e .cursor. Embaixo, o que o init configura uma vez por máquina: core.hooksPath, ignore global e PATH. A animação roda uma vez em cerca de três segundos e é desativada quando o sistema pede movimento reduzido; hero-still.svg é o quadro final.</desc>
+  <defs>
+    <pattern id="dots" width="32" height="32" patternUnits="userSpaceOnUse"><circle cx="2" cy="2" r="1" fill="#ECEFF4" opacity=".06"/></pattern>
+    <radialGradient id="glow" cx=".5" cy=".5" r=".5">
+      <stop stop-color="#7FA2F2" stop-opacity=".16"/><stop offset="1" stop-color="#7FA2F2" stop-opacity="0"/>
+    </radialGradient>
+    <clipPath id="frame"><rect width="1600" height="720" rx="24"/></clipPath>
+  </defs>
+
+  <g clip-path="url(#frame)">
+    <rect width="1600" height="720" fill="#121418"/>
+    <rect width="1600" height="720" fill="url(#dots)"/>
+    <circle cx="980" cy="380" r="300" fill="url(#glow)"/>
+
+    <!-- header -->
+    <g font-family="'SF Mono', SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="14" letter-spacing="2">
+      <text x="80" y="76" fill="#ECEFF4" font-weight="700">JEAN DEV ENVIRONMENT</text>
+      <text x="320" y="76" fill="#9AA3B2">CONTROL CENTER</text>
+      <text x="1520" y="76" fill="#9AA3B2" text-anchor="end">BASH 3.2 · SEM DEPENDÊNCIAS</text>
+    </g>
+    <path d="M80 98h1440" stroke="#2A2F38"/>
+
+    <!-- copy -->
+    <g class="m-copy">
+      <text x="80" y="190" fill="#7FA2F2" font-family="'SF Mono', SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="15" letter-spacing="2.4" font-weight="700">UMA FONTE DE VERDADE PARA TODOS OS PROJETOS</text>
+      <path d="M80 236h70l24 44-24 44H80z" fill="#7FA2F2"/>
+      <text x="104" y="298" fill="#121418" font-family="'SF Mono', SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="48" font-weight="700">~</text>
+      <text x="196" y="314" fill="#ECEFF4" font-family="'SF Mono', SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="112" font-weight="700" textLength="500" lengthAdjust="spacingAndGlyphs">dev-env</text>
+      <g font-family="'Helvetica Neue', Helvetica, Arial, 'Segoe UI', Roboto, 'Liberation Sans', sans-serif" font-size="40" font-weight="600">
+        <text x="80" y="404" fill="#ECEFF4">Configure uma vez.</text>
+        <text x="80" y="454" fill="#8FD19E">Todo projeto herda.</text>
+      </g>
+      <g fill="#9AA3B2" font-family="'Helvetica Neue', Helvetica, Arial, 'Segoe UI', Roboto, 'Liberation Sans', sans-serif" font-size="21">
+        <text x="80" y="514">Symlinks declarativos, regras únicas para agentes</text>
+        <text x="80" y="544">e hooks AI Guard, por um CLI idempotente.</text>
+      </g>
+      <rect x="80" y="586" width="520" height="48" rx="10" fill="#1B1E24" stroke="#2A2F38" stroke-width="1.5"/>
+      <text x="102" y="617" font-family="'SF Mono', SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="16" fill="#ECEFF4"><tspan fill="#8FD19E">$</tspan> dev-env project ~/Developer/Projects/&lt;app&gt;</text>
+    </g>
+
+    <!-- spokes core → modules -->
+    <path class="m-spoke" d="M928 328L900 252M1032 328L1060 252M928 432L900 508M1032 432L1060 508" fill="none" stroke="#3B4250" stroke-width="2"/>
+
+    <!-- modules (real repository paths) -->
+    <g class="m-mod">
+      <g fill="#1B1E24" stroke="#2A2F38" stroke-width="1.5">
+        <rect x="770" y="206" width="190" height="48" rx="10"/>
+        <rect x="1000" y="206" width="190" height="48" rx="10"/>
+        <rect x="770" y="506" width="190" height="48" rx="10"/>
+        <rect x="1000" y="506" width="190" height="48" rx="10"/>
+      </g>
+      <g font-family="'SF Mono', SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="11" letter-spacing="1.2" fill="#9AA3B2">
+        <text x="788" y="226">MANIFESTO</text><text x="1018" y="226">REGRAS</text>
+        <text x="788" y="526">AI GUARD</text><text x="1018" y="526">CLI</text>
+      </g>
+      <g font-family="'SF Mono', SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="13" fill="#ECEFF4">
+        <text x="788" y="244">links.yaml</text><text x="1018" y="244">ai/shared/AGENTS.md</text>
+        <text x="788" y="544">git/hooks/</text><text x="1018" y="544">bin/dev-env</text>
+      </g>
+    </g>
+
+    <!-- core -->
+    <g class="m-core">
+      <circle cx="980" cy="380" r="78" fill="#1B1E24" stroke="#7FA2F2" stroke-width="2.5"/>
+      <circle cx="980" cy="380" r="64" fill="none" stroke="#7FA2F2" stroke-opacity=".35" stroke-dasharray="2 6"/>
+      <text x="980" y="380" fill="#ECEFF4" font-family="'SF Mono', SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="22" font-weight="700" text-anchor="middle">dev-env</text>
+      <text x="980" y="402" fill="#9AA3B2" font-family="'SF Mono', SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="11" text-anchor="middle">~/Developer/dev-env</text>
+    </g>
+
+    <!-- link core → project -->
+    <path class="m-link" d="M1058 380h208" fill="none" stroke="#7FA2F2" stroke-width="2.5"/>
+    <path class="m-card" d="M1256 372l10 8-10 8" fill="none" stroke="#7FA2F2" stroke-width="2.5"/>
+
+    <!-- project card (stack = every registered project) -->
+    <g class="m-card">
+      <rect x="1296" y="270" width="230" height="200" rx="14" fill="#16191E" stroke="#2A2F38" stroke-width="1.5"/>
+      <rect x="1286" y="280" width="230" height="200" rx="14" fill="#181B21" stroke="#2A2F38" stroke-width="1.5"/>
+      <rect x="1276" y="290" width="230" height="200" rx="14" fill="#1B1E24" stroke="#7FA2F2" stroke-opacity=".6" stroke-width="1.5"/>
+      <text x="1296" y="320" fill="#9AA3B2" font-family="'SF Mono', SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="12" letter-spacing="1">Projects/&lt;app&gt;/</text>
+      <path d="M1296 334h190" stroke="#2A2F38"/>
+      <g font-family="'SF Mono', SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="15" fill="#ECEFF4">
+        <text x="1296" y="372">AGENTS.md</text><text x="1296" y="418">.claude</text><text x="1296" y="464">.cursor</text>
+      </g>
+      <g fill="none" stroke="#9AA3B2" stroke-width="1.6" stroke-linecap="round">
+        <path d="M1430 367h22m-6-5 6 5-6 5M1430 413h22m-6-5 6 5-6 5M1430 459h22m-6-5 6 5-6 5"/>
+      </g>
+    </g>
+    <g fill="none" stroke="#8FD19E" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+      <path class="m-ok1" d="M1466 367l5 5 9-11"/><path class="m-ok2" d="M1466 413l5 5 9-11"/><path class="m-ok3" d="M1466 459l5 5 9-11"/>
+    </g>
+
+    <!-- machine wiring (dev-env init, once per machine) -->
+    <g class="m-host">
+      <text x="770" y="614" fill="#9AA3B2" font-family="'SF Mono', SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="11" letter-spacing="1.6">UMA VEZ POR MÁQUINA · dev-env init</text>
+      <g fill="none" stroke="#2A2F38" stroke-width="1.5">
+        <rect x="770" y="630" width="230" height="38" rx="19"/><rect x="1012" y="630" width="230" height="38" rx="19"/><rect x="1254" y="630" width="266" height="38" rx="19"/>
+      </g>
+      <g font-family="'SF Mono', SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="13" fill="#ECEFF4" text-anchor="middle">
+        <text x="885" y="654">core.hooksPath</text><text x="1127" y="654">~/.config/git/ignore</text><text x="1387" y="654">PATH · ~/.zshrc</text>
+      </g>
+    </g>
+  </g>
+</svg>

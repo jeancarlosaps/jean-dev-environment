@@ -1,0 +1,93 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="760" viewBox="0 0 1600 760" role="img" aria-labelledby="title desc">
+  <title id="title">Arquitetura do Jean Dev Environment</title>
+  <desc id="desc">Três colunas. Repositório, acessado por ~/Developer/dev-env: bin/dev-env, manifest/links.yaml, ai/shared, git/hooks, bootstrap, e state e backups por máquina. No meio, o que dev-env project faz: resolve o perfil do manifesto, aplica cada link (mantém, recria, faz backup ou pula), escreve .git/info/exclude e registra o projeto em state/projects.json. À direita, o projeto: symlinks AGENTS.md, .claude e .cursor; .mcp.json só no perfil swift e hoje pulado porque a fonte não existe; e as entradas em .git/info/exclude. Uma linha volta do projeto ao repositório: os symlinks resolvem para ai/shared através de ~/Developer/dev-env.</desc>
+  <defs>
+    <pattern id="dots" width="32" height="32" patternUnits="userSpaceOnUse"><circle cx="2" cy="2" r="1" fill="#ECEFF4" opacity=".06"/></pattern>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0l10 5-10 5z" fill="#7FA2F2"/></marker>
+    <clipPath id="frame"><rect width="1600" height="760" rx="24"/></clipPath>
+  </defs>
+  <g clip-path="url(#frame)">
+    <rect width="1600" height="760" fill="#121418"/>
+    <rect width="1600" height="760" fill="url(#dots)"/>
+    <g font-family="'SF Mono', SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="14" letter-spacing="2">
+      <text x="80" y="72" fill="#ECEFF4" font-weight="700">JEAN DEV ENVIRONMENT</text>
+      <text x="320" y="72" fill="#9AA3B2">ARQUITETURA</text>
+      <text x="1520" y="72" fill="#9AA3B2" text-anchor="end">FIG. 01</text>
+    </g>
+    <path d="M80 94h1440" stroke="#2A2F38"/>
+
+    <!-- panels -->
+    <g fill="#1B1E24" stroke="#2A2F38" stroke-width="1.5">
+      <rect x="80" y="130" width="440" height="510" rx="16"/>
+      <rect x="600" y="130" width="400" height="510" rx="16"/>
+      <rect x="1080" y="130" width="440" height="510" rx="16"/>
+    </g>
+    <g font-family="'SF Mono', SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="12" letter-spacing="1.8" fill="#7FA2F2" font-weight="700">
+      <text x="108" y="168">REPOSITÓRIO</text><text x="628" y="168">dev-env project &lt;path&gt;</text><text x="1108" y="168">PROJETO</text>
+    </g>
+    <g font-family="'SF Mono', SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="12" fill="#9AA3B2">
+      <text x="108" y="190">~/Developer/dev-env → Projects/jean-dev-environment</text>
+      <text x="628" y="190">idempotente · --dry-run disponível</text>
+      <text x="1108" y="190">~/Developer/Projects/&lt;app&gt;</text>
+    </g>
+    <path d="M108 206h384M628 206h344M1108 206h384" stroke="#2A2F38"/>
+
+    <!-- repository rows -->
+    <g font-family="'SF Mono', SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="16" fill="#ECEFF4">
+      <text x="108" y="248">bin/dev-env</text><text x="108" y="320">manifest/links.yaml</text>
+      <text x="108" y="392" fill="#8FD19E">ai/shared/</text><text x="108" y="464">git/hooks/</text>
+      <text x="108" y="536">bootstrap/</text><text x="108" y="608" fill="#9AA3B2">state/ · backups/</text>
+    </g>
+    <g font-family="'Helvetica Neue', Helvetica, Arial, 'Segoe UI', Roboto, 'Liberation Sans', sans-serif" font-size="15" fill="#9AA3B2">
+      <text x="108" y="270">CLI: init, project, migrate, doctor, validate</text>
+      <text x="108" y="342">Perfis default e swift, links declarativos</text>
+      <text x="108" y="414">Conteúdo real: AGENTS.md, .claude, .cursor, …</text>
+      <text x="108" y="486">AI Guard, ativado por core.hooksPath global</text>
+      <text x="108" y="558">Comandos e bibliotecas do CLI (Bash 3.2)</text>
+      <text x="108" y="630">Por máquina, ignorados pelo Git</text>
+    </g>
+
+    <!-- project steps -->
+    <g fill="#121418" stroke="#7FA2F2" stroke-width="2">
+      <circle cx="642" cy="256" r="16"/><circle cx="642" cy="350" r="16"/><circle cx="642" cy="444" r="16"/><circle cx="642" cy="538" r="16"/>
+    </g>
+    <path d="M642 272v62M642 366v62M642 460v62" stroke="#2A2F38" stroke-width="2"/>
+    <g font-family="'SF Mono', SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="14" font-weight="700" fill="#7FA2F2" text-anchor="middle">
+      <text x="642" y="261">1</text><text x="642" y="355">2</text><text x="642" y="449">3</text><text x="642" y="543">4</text>
+    </g>
+    <g font-family="'Helvetica Neue', Helvetica, Arial, 'Segoe UI', Roboto, 'Liberation Sans', sans-serif" fill="#ECEFF4">
+      <g font-size="17" font-weight="600">
+        <text x="672" y="254">Resolve o perfil</text><text x="672" y="348">Aplica cada link</text>
+        <text x="672" y="442">Protege o Git do projeto</text><text x="672" y="536">Registra o projeto</text>
+      </g>
+      <g font-size="14" fill="#9AA3B2">
+        <text x="672" y="276">manifesto + extends</text>
+        <text x="672" y="370">correto: mantém · quebrado: recria</text><text x="672" y="390">dado real: backup | skip | fail</text>
+        <text x="672" y="464">entradas em .git/info/exclude</text>
+        <text x="672" y="558">state/projects.json, com o perfil</text>
+      </g>
+    </g>
+
+    <!-- project rows -->
+    <g font-family="'SF Mono', SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="16" fill="#ECEFF4">
+      <text x="1108" y="248">AGENTS.md</text><text x="1108" y="320">.claude</text><text x="1108" y="392">.cursor</text>
+      <text x="1108" y="464" fill="#9AA3B2">.mcp.json</text><text x="1108" y="536">.git/info/exclude</text>
+    </g>
+    <g font-family="'Helvetica Neue', Helvetica, Arial, 'Segoe UI', Roboto, 'Liberation Sans', sans-serif" font-size="15" fill="#9AA3B2">
+      <text x="1108" y="270">symlink · conflict: skip (AGENTS.md local vence)</text>
+      <text x="1108" y="342">symlink → ai/shared/.claude</text>
+      <text x="1108" y="414">symlink → ai/shared/.cursor</text>
+      <text x="1108" y="486">só perfil swift · opcional · fonte ainda ausente</text>
+      <text x="1108" y="558">mantém os links fora do Git do projeto</text>
+    </g>
+    <rect x="1094" y="440" width="412" height="56" rx="10" fill="none" stroke="#9AA3B2" stroke-width="1.5" stroke-dasharray="5 6"/>
+
+    <!-- flow arrows -->
+    <g fill="none" stroke="#7FA2F2" stroke-width="2.2" marker-end="url(#arrow)">
+      <path d="M520 316h72"/><path d="M1000 316h72"/>
+    </g>
+    <path d="M1300 640v52H300v-44" fill="none" stroke="#8FD19E" stroke-width="2" stroke-dasharray="7 6"/>
+    <path d="M293 656l7-10 7 10" fill="none" stroke="#8FD19E" stroke-width="2"/>
+    <text x="800" y="718" fill="#8FD19E" font-family="'SF Mono', SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="13" letter-spacing="1.4" text-anchor="middle">OS SYMLINKS RESOLVEM PARA ai/shared/ VIA ~/Developer/dev-env</text>
+  </g>
+</svg>
