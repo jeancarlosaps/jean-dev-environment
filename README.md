@@ -257,6 +257,71 @@ sentido). O perfil usado por cada projeto fica gravado no registro, então
 
 ---
 
+## 🤖 Regras compartilhadas para agentes
+
+Além dos symlinks, o `dev-env` distribui um **conjunto único de regras
+compartilhadas** para desenvolvimento assistido por agentes. A fonte da
+verdade é um arquivo só:
+
+```
+ai/shared/AGENTS.md
+```
+
+Todos os demais pontos de entrada apenas **apontam** para ele — nunca
+duplicam regra:
+
+```
+ai/shared/.claude/CLAUDE.md          ──┐
+ai/shared/.cursor/rules/core.mdc       ├──► ai/shared/AGENTS.md
+ai/shared/.cursor/rules/*.mdc        ──┘
+```
+
+O conhecimento técnico acumulado (investigações, causa raiz, evidências)
+mora separado, em `ai/shared/knowledge/engineering-learnings.md`.
+
+### Filosofia de engenharia
+
+- **Engenharia antes da ferramenta** — as regras descrevem comportamento
+  de engenharia, não preferência por uma IA.
+- **Causa raiz antes de workaround** — mitigar sintoma não encerra
+  investigação.
+- **Evidência antes de inferência** — fato, hipótese, inferência e
+  decisão são coisas distintas.
+- **Arquitetura antes de refatoração** — entender o existente antes de
+  mudar.
+- **Escopo mínimo, menor diff** — achado fora de escopo é registrado, não
+  implementado junto.
+- **Git seguro** — auditoria de branch, checklists de pré-commit e
+  pré-push, nenhuma ação destrutiva sem autorização explícita.
+- **Documentação viva** — a documentação representa o padrão vigente; o
+  histórico pertence ao Git.
+- **Aprendizado contínuo** — `Decision → Rule → Learning`, cada etapa com
+  um dono e sem texto duplicado.
+
+### Compatibilidade
+
+As regras são agnósticas de ferramenta. Claude, Cursor, ChatGPT, Codex,
+Gemini, Copilot e agentes futuros consomem exatamente o mesmo
+`AGENTS.md`. Limitação de uma ferramenta específica é exceção
+operacional registrada, nunca uma reescrita da regra global.
+
+### Customização por projeto
+
+Cada projeto **descobre e respeita a própria convenção** — não existe
+padrão universal imposto pelo `dev-env`:
+
+- convenção de commits;
+- estratégia de branches e nome da branch base;
+- template de PR (`.github/pull_request_template.md`);
+- CI;
+- lint;
+- testes.
+
+Adapte o projeto, não as regras globais. Nunca edite o `AGENTS.md` para
+acomodar uma única ferramenta ou um único repositório.
+
+---
+
 ## 🛠️ Troubleshooting
 
 **Link quebrado / apontando errado**
