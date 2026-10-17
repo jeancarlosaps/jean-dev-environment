@@ -321,12 +321,10 @@ O `init` aponta o `core.hooksPath` global para `git/hooks/`. A partir daí, todo
 ```mermaid
 flowchart TB
   subgraph COMMIT["git commit"]
-    direction LR
     PC["pre-commit<br/>artefatos de IA<br/>identidade"] --> PM["prepare-commit-msg<br/>remove trailers"]
     PM --> CM["commit-msg<br/>bloqueia menção<br/>e coautoria"]
   end
   subgraph PUSH["git push"]
-    direction LR
     PP["pre-push<br/>revalida cada commit"] --> R[("remoto")]
   end
   CM --> PP
@@ -334,6 +332,8 @@ flowchart TB
   classDef done fill:#8FD19E,stroke:#8FD19E,color:#121418
   class PC,PM,CM,PP hook
   class R done
+  style COMMIT fill:none,stroke:#7FA2F2,stroke-dasharray:4 4
+  style PUSH fill:none,stroke:#7FA2F2,stroke-dasharray:4 4
 ```
 
 | Hook | Bloqueia ou corrige |
