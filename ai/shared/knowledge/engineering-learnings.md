@@ -15,6 +15,40 @@ Todo agente deve:
 4. Atualizar um aprendizado existente sempre que ele evoluir, em vez de criar um documento duplicado.
 5. Registrar a **regra** resultante no `AGENTS.md` e manter aqui apenas o **aprendizado** e suas evidências.
 
+## O que registrar
+
+Registrar o que tem valor para uma investigação futura: causa raiz,
+decisão arquitetural, diferença de comportamento entre plataformas ou
+frameworks, workaround descartado e por quê, solução adotada e ajustes
+posteriores.
+
+Não registrar bugs triviais, mudanças pequenas, ajustes de layout sem
+valor arquitetural nem tarefas rotineiras. Manter o documento conciso:
+não é documentação funcional nem ADR.
+
+O repositório é público: nada de nomes de clientes, produtos ou
+organizações privadas, caminhos pessoais, segredos ou URLs internas.
+Use nomes genéricos (ex.: `DSUIListContent`, "repositório privado do
+design system").
+
+## Estrutura de uma entrada
+
+```markdown
+# Título
+
+## Confidence
+## Contexto
+## Investigação
+## Causa raiz
+## Hipóteses descartadas    (quando houver)
+## Solução adotada
+## Ajustes posteriores      (quando houver)
+## Lacunas                  (quando houver)
+## Lições aprendidas
+## Recomendações futuras
+## Referências
+```
+
 > Este documento complementa as regras do projeto.
 > Ele registra decisões arquiteturais e aprendizados obtidos durante investigações reais.
 
