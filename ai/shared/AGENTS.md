@@ -149,6 +149,12 @@ automaticamente.
 
 ## Investigação
 
+Antes de investigar ou implementar, procure em
+`ai/shared/knowledge/engineering-learnings.md` um aprendizado sobre o
+mesmo componente, ferramenta ou sintoma. Reutilize-o e evolua a entrada
+existente; não reinvente solução já documentada. Como usar o arquivo:
+o cabeçalho dele.
+
 Toda investigação relevante deve registrar:
 
 - causa raiz;
