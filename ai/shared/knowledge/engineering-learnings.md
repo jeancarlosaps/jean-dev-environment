@@ -1741,3 +1741,78 @@ Links globais fora do manifesto: sem declaração, não há instalação reprodu
 - `manifest/links.yaml` (`machine:`), `bootstrap/commands/init.sh` (`_init_machine_links`), `bootstrap/commands/doctor.sh` (`_doctor_machine`)
 - <https://code.claude.com/docs/en/memory>
 - <https://cursor.com/docs/context/rules>
+
+---
+
+# CocoaPods com Xcode 26: RxSwift congelado na 6.9.0 e script sandboxing
+
+## Confidence
+
+🟡 **Validado em laboratório / POC**
+
+- Projeto novo compilado, testado e executado no simulador; clone limpo reproduz o resultado.
+- Ainda sem merge nem uso prolongado.
+
+## Contexto
+
+Projeto UIKit novo com CocoaPods obrigatório (Alamofire, RxSwift, RxCocoa, Kingfisher, SwiftLint).
+Xcode 26.5 (17F42), Swift 6.3.2 em Swift 5 language mode, CocoaPods 1.16.2 (xcodeproj 1.27.0),
+deployment target iOS 16.0, simulador iOS 26.5. Verificado em 2026-10-17.
+
+## Investigação
+
+| Experimento | Resultado |
+|---|---|
+| Índice do CDN do CocoaPods para RxSwift/RxCocoa/RxRelay | Última versão publicada: 6.9.0 (fev/2025); 6.10.x existe só via SPM |
+| Notas do RxSwift 6.10.0 | Suporte a CocoaPods oficialmente descontinuado |
+| Blog do CocoaPods | Trunk deixa de aceitar novas versões em 2026-12-02; builds existentes continuam |
+| `pod install` em projeto com pastas sincronizadas (`objectVersion = 77`) | Integração concluída sem converter grupos |
+| `pod install` com repositório CDN local antigo | `None of your spec sources contain a spec satisfying ...`; resolvido com `pod repo update trunk` |
+| Build sem ajustes | 8 avisos de deployment target 9.0/10.0 (mínimo do Xcode 26 é 12.0) e 4 avisos de `Sendable` do Alamofire derivados do mesmo alvo baixo |
+| `post_install` com `IPHONEOS_DEPLOYMENT_TARGET = 16.0` nos pods | Os 12 avisos somem; surge 1 aviso de API depreciada do RxCocoa, esperado com alvo maior |
+| RxSwift 6.9.0 com Swift 6.3 | Compila; 4 avisos `weak variable ... never mutated` (corrigidos só na 6.10) |
+| `ENABLE_USER_SCRIPT_SANDBOXING = YES` com fases `[CP]` | Funcionam sem alteração |
+| Mesma configuração com fase do SwiftLint (binário do pod) | `Sandbox: swiftlint deny file-read-data` no binário e no `.swiftlint.yml` |
+| Fase do SwiftLint com binário, config e pastas de código em `inputPaths`, mais `--no-cache` | Lint executa dentro do sandbox, lê subpastas e detecta violação inserida de propósito |
+
+## Causa raiz
+
+- RxSwift via CocoaPods parou na 6.9.0 por decisão do projeto, alinhada ao trunk somente leitura.
+- Podspecs antigos declaram deployment targets abaixo do mínimo aceito pelo Xcode 26.
+- O script sandboxing só permite à fase ler o que ela declara como entrada; o SwiftLint lê a árvore de código e o próprio config.
+
+## Hipóteses descartadas
+
+- **Pastas sincronizadas incompatíveis com CocoaPods:** descartado no `pod install` real.
+- **Sandboxing quebra as fases do CocoaPods:** descartado no build; só a fase do SwiftLint precisou de ajuste.
+- **Desligar o sandboxing é necessário para o SwiftLint:** descartado; declarar entradas basta.
+
+## Solução adotada
+
+- Fixar RxSwift/RxCocoa em `6.9.0` e travar tudo no `Podfile.lock`.
+- `post_install` alinhando o deployment target dos pods ao do app.
+- Fase do SwiftLint com `inputPaths` (binário, config, pastas de código) e `--no-cache`, mantendo o sandboxing ligado.
+- Avisos restantes de terceiros documentados, não suprimidos.
+
+## Lacunas
+
+- Execução em runtime iOS 16 não validada (apenas compilação).
+- Comportamento após 2026-12-02 não observado.
+- Diretórios em `inputPaths` também entram na análise de dependências do Xcode; impacto em builds incrementais grandes não medido.
+
+## Lições aprendidas
+
+- Antes de adotar uma dependência via CocoaPods em 2026, confirmar no índice do CDN qual é a última versão realmente publicada; o GitHub pode estar à frente.
+- Aviso de alvo abaixo do mínimo nos pods se resolve no `post_install`, sem tocar em podspecs.
+- Bloqueio de sandbox em fase de script se resolve declarando entradas antes de considerar desligar a proteção.
+
+## Recomendações futuras
+
+- Em projeto novo sem exigência de CocoaPods, preferir SPM.
+- Reavaliar a pilha CocoaPods após a mudança do trunk e a cada nova versão do Xcode.
+
+## Referências
+
+- Projeto: `jeancarlosaps/marketwatch-ios` (`Podfile`, `Podfile.lock`, fase SwiftLint no `project.pbxproj`, ADR-001)
+- <https://blog.cocoapods.org/CocoaPods-Specs-Repo/>
+- <https://github.com/ReactiveX/RxSwift/releases/tag/6.10.0>
