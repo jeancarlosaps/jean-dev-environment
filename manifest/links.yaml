@@ -23,6 +23,8 @@
 #           target      path relative to the project root
 #           required    optional override of defaults.required
 #           conflict    optional override of defaults.conflict
+#   machine         links installed once per machine by `dev-env init`
+#     links         same keys as profile links; target is relative to $HOME
 # =====================================================================
 
 version: 1
@@ -42,3 +44,11 @@ profiles:
         target: .claude
       - source: ai/shared/.cursor
         target: .cursor
+
+# Applied by `dev-env init`. A real file at the target is never replaced
+# (conflict: skip); doctor reports it.
+machine:
+  links:
+    - source: ai/shared/.claude/CLAUDE.md
+      target: .claude/CLAUDE.md
+      conflict: skip

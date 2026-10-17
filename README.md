@@ -101,8 +101,11 @@ AGENTS.md (raiz do projeto)  ──────────┐
 | Ferramenta | O que recebe | Como lê as regras |
 |---|---|---|
 | Agentes que leem `AGENTS.md` | `AGENTS.md` na raiz (symlink) | Diretamente |
-| Claude Code | `.claude/` (symlink) | `.claude/CLAUDE.md` importa `@~/Developer/dev-env/ai/shared/AGENTS.md` |
-| Cursor | `.cursor/` (symlink) | `.cursor/rules/core.mdc` (`alwaysApply: true`) manda seguir o mesmo arquivo |
+| Claude Code | `~/.claude/CLAUDE.md` (link da máquina, criado pelo `init`) e `.claude/` no projeto | Os dois `CLAUDE.md` importam `@~/Developer/dev-env/ai/shared/AGENTS.md`; o da máquina vale em qualquer repositório |
+| Cursor | `.cursor/` no projeto | `.cursor/rules/core.mdc` (`alwaysApply: true`) manda seguir o mesmo arquivo |
+
+> [!NOTE]
+> O Cursor só documenta regras em arquivo **por projeto** (`.cursor/rules/`, `AGENTS.md`). Regras globais são as *User Rules* da interface (Customize → Rules), sem caminho de arquivo, por isso o `dev-env` não cria nada em `~/.cursor`. Fora de projetos configurados, cole nas User Rules uma linha como "Siga as regras de `~/Developer/dev-env/ai/shared/AGENTS.md`".
 
 Projeto que já tenha um `AGENTS.md` próprio não é sobrescrito: o link é `conflict: skip` e o arquivo local prevalece.
 
@@ -157,7 +160,8 @@ O `init` é idempotente e faz:
 5. avisa se um `core.excludesfile` legado anula esse ignore;
 6. adiciona `dev-env/bin` ao `PATH` (bloco delimitado no `~/.zshrc`);
 7. aponta o `core.hooksPath` global para `git/hooks` (AI Guard);
-8. autoriza este repositório a versionar os próprios artefatos de IA.
+8. cria os links da máquina declarados em `machine:` no manifesto (hoje `~/.claude/CLAUDE.md`), sem substituir arquivo seu, e remove links gerenciados que saíram do manifesto;
+9. autoriza este repositório a versionar os próprios artefatos de IA.
 
 Abra um novo shell e o comando `dev-env` fica disponível de qualquer lugar.
 
@@ -249,7 +253,7 @@ dev-env doctor ~/Developer/Projects/meu-app
 dev-env doctor --all                 # todos os projetos registrados
 ```
 
-Verifica symlink mestre, estrutura `ai/shared`, manifesto, `core.hooksPath`, e por projeto: links quebrados/ausentes/apontando errado, permissões, `info/exclude`, Claude/Cursor/MCP. `--all` usa automaticamente o **perfil registrado de cada projeto**. Sai com código ≠ 0 se houver falha (CI-friendly).
+Verifica symlink mestre, estrutura `ai/shared`, manifesto, `core.hooksPath`, links da máquina (`machine:`), e por projeto: links quebrados/ausentes/apontando errado, permissões, `info/exclude`, Claude/Cursor/MCP. `--all` usa automaticamente o **perfil registrado de cada projeto**. Sai com código ≠ 0 se houver falha (CI-friendly).
 
 ## 06 · Configuração
 
@@ -275,9 +279,16 @@ profiles:
         target: .claude
       - source: ai/shared/.cursor
         target: .cursor
+
+machine:                        # aplicado pelo `dev-env init`, uma vez por máquina
+  links:
+    - source: ai/shared/.claude/CLAUDE.md
+      target: .claude/CLAUDE.md # relativo ao $HOME
+      conflict: skip            # arquivo seu nunca é substituído
 ```
 
-- `source` é relativo à raiz do `dev-env`; `target` é relativo à raiz do projeto.
+- `source` é relativo à raiz do `dev-env`; `target` é relativo à raiz do projeto (perfis) ou ao `$HOME` (`machine:`).
+- `machine:` usa o mesmo formato de link dos perfis. O `init` registra em `state/machine-links` o que criou: um link retirado do manifesto é removido no próximo `init`, mas só se ainda for symlink para o `dev-env`.
 - `required`/`conflict` têm padrão em `defaults` e podem ser sobrescritos por link.
 - Regras do formato: indentação de 2 espaços, sem tabs, sem arrays inline, sem âncoras. Quebrou a regra → o parser falha alto (não adivinha).
 
@@ -361,7 +372,7 @@ jean-dev-environment/            (= ~/Developer/dev-env)
 ├── git/hooks/                   # AI Guard (core.hooksPath global)
 ├── scripts/mac-dev-setup.sh     # setup de máquina (zsh) — ver no fim
 ├── docs/assets/readme/          # ilustrações deste README
-├── state/                       # registro dos projetos (por máquina)
+├── state/                       # registro dos projetos e dos links da máquina
 └── backups/                     # backups timestamped (por máquina)
 ```
 
@@ -412,6 +423,10 @@ Cheque `manifest/links.yaml`: indentação de 2 espaços, sem tabs, só as chave
 ### Ignore global sem efeito
 
 Se `git config --global core.excludesfile` apontar para outro arquivo, o Git deixa de ler `~/.config/git/ignore` e os links podem aparecer como untracked. O `init` avisa; consolide os padrões em um único arquivo ou remova a configuração legada.
+
+### `~/.claude/CLAUDE.md` é um arquivo seu
+
+O `init` não substitui o arquivo (`conflict: skip`) e o `doctor` avisa. Para carregar as regras compartilhadas, mova o arquivo e rode `dev-env init` de novo, ou acrescente nele a linha `@~/Developer/dev-env/ai/shared/AGENTS.md`.
 
 ### Commit bloqueado pelo AI Guard
 

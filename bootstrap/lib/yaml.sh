@@ -12,6 +12,10 @@
 #   profile    <name>     <key>     <value>     (key = extends|profileVersion)
 #   link       <profile>  <index>   <key>       <value>
 #
+# The top-level `machine:` section uses the same link schema one level
+# shallower (`machine: / links: / - source: ...`). Its links are emitted
+# under the reserved profile name "@machine" (targets relative to $HOME).
+#
 # Rules enforced: 2-space indentation, known keys only. Any violation
 # prints an error to stderr and returns non-zero.
 # =====================================================================
@@ -57,6 +61,11 @@ yaml_flatten() {
       ind = indent_of(raw)
       if (ind % 2 != 0) fail("indentation must be a multiple of 2 spaces")
       body = trim(raw)
+      # machine: has no profile-name level; shift it to the profile layout
+      if (section == "machine" && ind > 0) {
+        if (ind == 2 && body != "links:") fail("machine: accepts only links: -> " body)
+        ind += 2
+      }
 
       # ---- top level (indent 0) ----
       if (ind == 0) {
@@ -68,6 +77,8 @@ yaml_flatten() {
           section = "defaults"
         } else if (body == "profiles:") {
           section = "profiles"
+        } else if (body == "machine:") {
+          section = "machine"; profile = "@machine"
         } else {
           fail("unknown top-level key: " body)
         }

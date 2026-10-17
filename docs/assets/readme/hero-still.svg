@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1600" height="720" viewBox="0 0 1600 720" role="img" aria-labelledby="title desc">
   <title id="title">dev-env — Configure uma vez. Todo projeto herda.</title>
-  <desc id="desc">Painel de controle do Jean Dev Environment. Um núcleo central, ~/Developer/dev-env, conectado aos quatro módulos reais do repositório: manifest/links.yaml, ai/shared/AGENTS.md, git/hooks e o CLI bin/dev-env. Do núcleo sai uma ligação para um projeto, que recebe os symlinks AGENTS.md, .claude e .cursor. Embaixo, o que o init configura uma vez por máquina: core.hooksPath, ignore global e PATH. Todos os elementos aparecem desde o primeiro quadro; a animação apenas assenta e acende as ligações, uma vez, em menos de três segundos, e não roda quando o sistema pede movimento reduzido. hero-still.svg é o quadro final.</desc>
+  <desc id="desc">Painel de controle do Jean Dev Environment. Um núcleo central, ~/Developer/dev-env, conectado aos quatro módulos reais do repositório: manifest/links.yaml, ai/shared/AGENTS.md, git/hooks e o CLI bin/dev-env. Do núcleo sai uma ligação para um projeto, que recebe os symlinks AGENTS.md, .claude e .cursor. Embaixo, o que o init configura uma vez por máquina: core.hooksPath, ignore global, PATH e ~/.claude/CLAUDE.md. Todos os elementos aparecem desde o primeiro quadro; a animação apenas assenta e acende as ligações, uma vez, em menos de três segundos, e não roda quando o sistema pede movimento reduzido. hero-still.svg é o quadro final.</desc>
   <defs>
     <pattern id="dots" width="32" height="32" patternUnits="userSpaceOnUse"><circle cx="2" cy="2" r="1" fill="#ECEFF4" opacity=".06"/></pattern>
     <radialGradient id="glow" cx=".5" cy=".5" r=".5">
@@ -95,10 +95,10 @@
     <g class="m-host">
       <text x="770" y="614" fill="#9AA3B2" font-family="'SF Mono', SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="11" letter-spacing="1.6">UMA VEZ POR MÁQUINA · dev-env init</text>
       <g fill="none" stroke="#2A2F38" stroke-width="1.5">
-        <rect x="770" y="630" width="230" height="38" rx="19"/><rect x="1012" y="630" width="230" height="38" rx="19"/><rect x="1254" y="630" width="266" height="38" rx="19"/>
+        <rect x="770" y="630" width="176" height="38" rx="19"/><rect x="958" y="630" width="176" height="38" rx="19"/><rect x="1146" y="630" width="176" height="38" rx="19"/><rect x="1334" y="630" width="186" height="38" rx="19"/>
       </g>
       <g font-family="'SF Mono', SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="13" fill="#ECEFF4" text-anchor="middle">
-        <text x="885" y="654">core.hooksPath</text><text x="1127" y="654">~/.config/git/ignore</text><text x="1387" y="654">PATH · ~/.zshrc</text>
+        <text x="858" y="654">core.hooksPath</text><text x="1046" y="654">~/.config/git/ignore</text><text x="1234" y="654">PATH · ~/.zshrc</text><text x="1427" y="654">~/.claude/CLAUDE.md</text>
       </g>
     </g>
   </g>
