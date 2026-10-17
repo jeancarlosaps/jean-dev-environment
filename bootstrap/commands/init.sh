@@ -10,6 +10,8 @@
 #   4. wire git's global ignore (~/.config/git/ignore)
 #   5. put <repo>/bin on PATH via a marked block in ~/.zshrc
 #   6. point git's global core.hooksPath at <repo>/git/hooks (AI guard)
+#   7. machine links from the manifest (machine:), relative to $HOME;
+#      managed links that left the manifest are retired safely
 #
 # Globals expected from bin/dev-env:
 #   DEV_ENV_HOME   absolute path of the repo (real)
@@ -161,6 +163,66 @@ _init_ai_guard_allow_self() {
   log_ok "🔓 dev-env repo authorized to version its own AI content"
 }
 
+# Machine-level links (manifest `machine:` section), applied with the same
+# engine as project links: idempotent, --dry-run aware, and a real file
+# at the target is never replaced (conflict policy from the manifest).
+# Targets this machine received are recorded in state/machine-links so a
+# link removed from the manifest can be retired later — but only while
+# it is still a symlink into the dev-env; anything else is left alone.
+_init_machine_links() {
+  local record="$STATE_DIR/machine-links" declared="" rc=0
+  local n i rel_src rel_tgt req cfl tgt prev
+  if manifest_has_machine "$MANIFEST"; then
+    if ! manifest_load "$MANIFEST" "$MANIFEST_MACHINE"; then
+      log_error "could not resolve machine links from the manifest"
+      return 1
+    fi
+    n=$(manifest_link_count)
+    i=1
+    while [ "$i" -le "$n" ]; do
+      rel_src=$(manifest_link_field "$i" source)
+      rel_tgt=$(manifest_link_field "$i" target)
+      req=$(manifest_link_field "$i" required)
+      cfl=$(manifest_link_field "$i" conflict)
+      tgt="$HOME/$rel_tgt"
+      link_apply "$DEV_ENV_STABLE/$rel_src" "$tgt" "$req" "$cfl" || rc=1
+      if [ -e "$tgt" ] && [ ! -L "$tgt" ]; then
+        log_warn "   ~/$rel_tgt is your own file and was kept; to use the managed"
+        log_warn "   link, move your file away and re-run 'dev-env init'"
+      fi
+      declared="$declared$rel_tgt
+"
+      i=$((i + 1))
+    done
+    manifest_unload
+  fi
+
+  # retire links this machine received earlier but the manifest dropped
+  if [ -f "$record" ]; then
+    while IFS= read -r prev; do
+      [ -n "$prev" ] || continue
+      printf '%s' "$declared" | grep -qxF "$prev" && continue
+      tgt="$HOME/$prev"
+      if [ -L "$tgt" ]; then
+        case "$(readlink "$tgt")" in
+          "$DEV_ENV_STABLE"/*|"$DEV_ENV_HOME"/*)
+            mutate rm -f "$tgt"
+            [ "${DRY_RUN:-0}" = "1" ] || log_ok "🧹 removed obsolete machine link: ~/$prev"
+            continue ;;
+        esac
+      fi
+      [ -e "$tgt" ] && log_warn "obsolete machine entry ~/$prev is not a dev-env link; left untouched"
+    done < "$record"
+  fi
+
+  if [ "${DRY_RUN:-0}" = "1" ]; then
+    log_dry "record machine links -> state/machine-links"
+  else
+    mkdir -p "$STATE_DIR" && printf '%s' "$declared" > "$record"
+  fi
+  return "$rc"
+}
+
 # git only falls back to ~/.config/git/ignore when core.excludesfile is
 # unset; a legacy excludesfile silently disables everything we write
 # there. Detect and warn (never rewrite the user's config).
@@ -186,6 +248,7 @@ cmd_init() {
   _init_git_excludes_check
   _init_path
   _init_git_hooks || rc=1
+  _init_machine_links || rc=1
   _init_ai_guard_allow_self
   if [ "$rc" -eq 0 ]; then
     log_ok "init complete"

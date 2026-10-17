@@ -11,18 +11,31 @@
 #   manifest_resolve  <file> <profile>  -> resolved links, TAB separated:
 #                                          source <TAB> target <TAB> required <TAB> conflict
 #   manifest_validate <file>            -> validates structure + every profile
+#   manifest_has_machine <file>         -> true if the manifest declares machine: links
+#
+# Machine links (top-level `machine:`) resolve under the reserved name
+# MANIFEST_MACHINE ("@machine"): same schema, targets relative to $HOME.
+# Reserved names never appear in manifest_profiles.
 #
 # Depends on: lib/yaml.sh (yaml_flatten), lib/log.sh (optional messages)
 # =====================================================================
 
-# List profile names defined in the manifest.
+MANIFEST_MACHINE="@machine"
+
+# List profile names defined in the manifest (reserved names excluded).
 manifest_profiles() {
   local file="$1"
   yaml_flatten "$file" | awk -F'\t' '
     $1 == "profile" { seen[$2]=1 }
     $1 == "link"    { seen[$2]=1 }
-    END { for (p in seen) print p }
+    END { for (p in seen) if (p !~ /^@/) print p }
   ' | sort
+}
+
+# True when the manifest declares a machine: section with links.
+manifest_has_machine() {
+  yaml_flatten "$1" 2>/dev/null | awk -F'\t' -v m="$MANIFEST_MACHINE" '
+    $1 == "link" && $2 == m { found = 1 } END { exit !found }'
 }
 
 # Resolve a single profile into its effective link list.
@@ -172,5 +185,9 @@ manifest_validate() {
   done <<EOF
 $profiles
 EOF
+  if manifest_has_machine "$file" && \
+     ! manifest_resolve "$file" "$MANIFEST_MACHINE" >/dev/null; then
+    rc=1
+  fi
   return "$rc"
 }

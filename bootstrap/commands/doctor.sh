@@ -10,7 +10,8 @@
 #   dev-env doctor             (no target) audits only the environment
 #
 # What it checks:
-#   environment : master symlink, ai/shared structure, manifest validity
+#   environment : master symlink, ai/shared structure, manifest validity,
+#                 AI-guard hooks, machine links (manifest machine:)
 #   per project : each link exists, is a symlink, resolves, and points
 #                 to the correct central source; source present;
 #                 target readable; .git/info/exclude wired
@@ -125,6 +126,47 @@ _doctor_environment() {
     _dr_fail "core.hooksPath aponta para outro lugar: $hookspath (AI guard inativo)"
   else
     _dr_warn "core.hooksPath não configurado (run 'dev-env init') — AI guard inativo"
+  fi
+  _doctor_machine
+}
+
+# -------- machine links (manifest machine:, relative to $HOME) -------
+_doctor_machine() {
+  manifest_has_machine "$MANIFEST" || return 0
+  manifest_load "$MANIFEST" "$MANIFEST_MACHINE" 2>/dev/null || return 0
+  local n i rel_src rel_tgt src tgt prev record="$STATE_DIR/machine-links" declared=""
+  n=$(manifest_link_count)
+  i=1
+  while [ "$i" -le "$n" ]; do
+    rel_src=$(manifest_link_field "$i" source)
+    rel_tgt=$(manifest_link_field "$i" target)
+    src="$DEV_ENV_STABLE/$rel_src"
+    tgt="$HOME/$rel_tgt"
+    declared="$declared$rel_tgt
+"
+    if [ -L "$tgt" ] && [ -e "$tgt" ] && \
+       [ "$(_link_canonical "$tgt")" = "$(_link_canonical "$src")" ]; then
+      _dr_ok "machine link: ~/$rel_tgt -> $rel_src"
+    elif [ -L "$tgt" ]; then
+      _dr_fail "machine link broken or misdirected: ~/$rel_tgt (run 'dev-env init')"
+    elif [ -e "$tgt" ]; then
+      _dr_warn "~/$rel_tgt is a real file, not managed by dev-env (shared rules may not load)"
+    else
+      _dr_fail "machine link missing: ~/$rel_tgt (run 'dev-env init')"
+    fi
+    i=$((i + 1))
+  done
+  manifest_unload
+  if [ -f "$record" ]; then
+    while IFS= read -r prev; do
+      [ -n "$prev" ] || continue
+      printf '%s' "$declared" | grep -qxF "$prev" && continue
+      [ -L "$HOME/$prev" ] || continue
+      case "$(readlink "$HOME/$prev")" in
+        "$DEV_ENV_STABLE"/*|"$DEV_ENV_HOME"/*)
+          _dr_warn "obsolete machine link still present: ~/$prev (run 'dev-env init')" ;;
+      esac
+    done < "$record"
   fi
 }
 
