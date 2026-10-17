@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1600" height="760" viewBox="0 0 1600 760" role="img" aria-labelledby="title desc">
   <title id="title">Arquitetura do Jean Dev Environment</title>
-  <desc id="desc">Três colunas. Repositório, acessado por ~/Developer/dev-env: bin/dev-env, manifest/links.yaml, ai/shared, git/hooks, bootstrap, e state e backups por máquina. No meio, o que dev-env project faz: resolve o perfil do manifesto, aplica cada link (mantém, recria, faz backup ou pula), escreve .git/info/exclude e registra o projeto em state/projects.json. À direita, o projeto: symlinks AGENTS.md, .claude e .cursor; .mcp.json só no perfil swift e hoje pulado porque a fonte não existe; e as entradas em .git/info/exclude. Uma linha volta do projeto ao repositório: os symlinks resolvem para ai/shared através de ~/Developer/dev-env.</desc>
+  <desc id="desc">Três colunas. Repositório, acessado por ~/Developer/dev-env: bin/dev-env, manifest/links.yaml, ai/shared, git/hooks, bootstrap, e state e backups por máquina. No meio, o que dev-env project faz: resolve o perfil do manifesto, aplica cada link (mantém, recria, faz backup ou pula), escreve .git/info/exclude e registra o projeto em state/projects.json. À direita, o projeto: symlinks AGENTS.md, .claude e .cursor, e as entradas em .git/info/exclude. Uma linha volta do projeto ao repositório: os symlinks resolvem para ai/shared através de ~/Developer/dev-env.</desc>
   <defs>
     <pattern id="dots" width="32" height="32" patternUnits="userSpaceOnUse"><circle cx="2" cy="2" r="1" fill="#ECEFF4" opacity=".06"/></pattern>
     <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0l10 5-10 5z" fill="#7FA2F2"/></marker>
@@ -40,7 +40,7 @@
     </g>
     <g font-family="'Helvetica Neue', Helvetica, Arial, 'Segoe UI', Roboto, 'Liberation Sans', sans-serif" font-size="15" fill="#9AA3B2">
       <text x="108" y="270">CLI: init, project, migrate, doctor, validate</text>
-      <text x="108" y="342">Perfis default e swift, links declarativos</text>
+      <text x="108" y="342">Perfis e links declarativos, com extends</text>
       <text x="108" y="414">Conteúdo real: AGENTS.md, .claude, .cursor, …</text>
       <text x="108" y="486">AI Guard, ativado por core.hooksPath global</text>
       <text x="108" y="558">Comandos e bibliotecas do CLI (Bash 3.2)</text>
@@ -71,16 +71,14 @@
     <!-- project rows -->
     <g font-family="'SF Mono', SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="16" fill="#ECEFF4">
       <text x="1108" y="248">AGENTS.md</text><text x="1108" y="320">.claude</text><text x="1108" y="392">.cursor</text>
-      <text x="1108" y="464" fill="#9AA3B2">.mcp.json</text><text x="1108" y="536">.git/info/exclude</text>
+      <text x="1108" y="464">.git/info/exclude</text>
     </g>
     <g font-family="'Helvetica Neue', Helvetica, Arial, 'Segoe UI', Roboto, 'Liberation Sans', sans-serif" font-size="15" fill="#9AA3B2">
       <text x="1108" y="270">symlink · conflict: skip (AGENTS.md local vence)</text>
       <text x="1108" y="342">symlink → ai/shared/.claude</text>
       <text x="1108" y="414">symlink → ai/shared/.cursor</text>
-      <text x="1108" y="486">só perfil swift · opcional · fonte ainda ausente</text>
-      <text x="1108" y="558">mantém os links fora do Git do projeto</text>
+      <text x="1108" y="486">mantém os links fora do Git do projeto</text>
     </g>
-    <rect x="1094" y="440" width="412" height="56" rx="10" fill="none" stroke="#9AA3B2" stroke-width="1.5" stroke-dasharray="5 6"/>
 
     <!-- flow arrows -->
     <g fill="none" stroke="#7FA2F2" stroke-width="2.2" marker-end="url(#arrow)">
