@@ -1383,3 +1383,229 @@ suporta. Usar "a versão mais recente" sem checar peer deps quebra o lint.
 - `npm view typescript-eslint peerDependencies`
 - `npm view typescript dist-tags`
 - Projeto: `jeancarlosaps/dinna-api` (`package.json`, README)
+
+---
+
+# Ignore global oculta arquivos de agentes em repositórios autorizados
+
+## Confidence
+
+🟢 **Validado em produção**
+
+- Diagnosticado e contornado na publicação de `jeancarlosaps/premium-readme-template`
+  (2026-10-16); CI verde com os arquivos rastreados.
+
+## Contexto
+
+Repositório novo cujo **assunto** são instruções para agentes, com
+`git config ai-guard.allowArtifacts true` para versionar `CLAUDE.md`,
+`AGENTS.md`, `.claude/skills/` e `.cursor/rules/`.
+
+Sintomas:
+
+- `git status --short` não listava esses arquivos como untracked.
+- O validador do projeto (baseado em `git ls-files --cached --others --exclude-standard`)
+  contava 16 arquivos Markdown em vez de 20 e não validava os ignorados.
+- Nenhum erro: os arquivos simplesmente "não existiam" para o Git.
+
+## Investigação
+
+```bash
+git status --short --ignored          # aparecem como "!!"
+git check-ignore -v AGENTS.md CLAUDE.md .cursor/rules/x.mdc .claude/skills/x/SKILL.md
+# /Users/<user>/.config/git/ignore:10:AGENTS.md   AGENTS.md
+# /Users/<user>/.config/git/ignore:2:.claude       .claude/skills/x/SKILL.md
+```
+
+**Fato:** a regra vem de `~/.config/git/ignore`, o ignore global que o
+`dev-env init` configura (`bootstrap/lib/git.sh`, `bootstrap/commands/init.sh`).
+
+## Causa raiz
+
+Dois mecanismos independentes:
+
+| Mecanismo | Escopo | Efeito |
+|---|---|---|
+| `ai-guard.allowArtifacts` | hooks (`pre-commit`) | **permite** commitar artefatos de IA |
+| `~/.config/git/ignore` | Git (status, add, ls-files) | **esconde** os mesmos arquivos |
+
+Liberar o hook não desliga o ignore. O Git só deixa de aplicar uma regra de
+ignore a um arquivo depois que ele está **rastreado**.
+
+## Solução adotada
+
+- Adicionar os arquivos autorizados explicitamente, um a um:
+  `git add -f AGENTS.md CLAUDE.md .claude/skills/<skill>/SKILL.md .cursor/rules/<rule>.mdc`.
+- Conferir que entraram: `git ls-files AGENTS.md CLAUDE.md .claude .cursor`.
+- Arquivos locais do mesmo diretório (ex.: `.claude/launch.json`) continuam
+  ignorados — `git add -f` é por caminho, nunca por diretório inteiro.
+- **Não** alterar o ignore global: ele protege todos os outros repositórios.
+
+## Hipóteses descartadas
+
+- **Arquivos não salvos / caminho errado:** descartado — existiam em disco;
+  `git check-ignore -v` apontou a regra.
+- **Ignore do projeto:** descartado — `.gitignore` do repo não continha as entradas.
+
+## Lacunas
+
+- Contribuidores com ignore global semelhante enfrentam o mesmo problema ao
+  criar *novos* arquivos desse tipo; para arquivos já rastreados não há efeito.
+
+## Lições aprendidas
+
+- Arquivo "sumido" do `git status` → `git check-ignore -v <arquivo>` antes de
+  qualquer outra hipótese; mostra arquivo e linha da regra.
+- `git add -f` só para arquivos **explicitamente autorizados**, nomeados um a
+  um, em repositórios com `ai-guard.allowArtifacts true`.
+- Ferramentas que listam arquivos via `git ls-files --exclude-standard`
+  (validadores, linters, geradores) ignoram silenciosamente esses arquivos até
+  o primeiro `git add -f`. Rodar a validação **depois** de rastrear.
+
+## Recomendações futuras
+
+- Em repositórios autorizados, incluir no checklist pré-commit:
+  `git status --short --ignored` e `git check-ignore -v` dos artefatos esperados.
+
+## Referências
+
+- `~/.config/git/ignore`; `bootstrap/lib/git.sh`; `bootstrap/commands/init.sh`
+- PR #3 (`fix/global-ignore-agent-rule-files`) — ampliação do ignore global
+- Projeto: `jeancarlosaps/premium-readme-template` (`scripts/validate-readme.mjs`)
+
+---
+
+# Falha de hook não interrompe sequência de comandos Git
+
+## Confidence
+
+🟡 **Validado em laboratório / POC**
+
+- Incidente real observado e recuperado antes do push; comportamento do shell
+  reproduzido isoladamente.
+
+## Contexto
+
+Publicação de `jeancarlosaps/premium-readme-template`. Cinco commits temáticos
+foram criados em **um único comando** (`git add … ; git commit … ; git add … ; …`),
+precedidos de `set -e`, executado pela ferramenta de shell do agente.
+
+O hook `commit-msg` do ai-guard bloqueou o **terceiro** commit (corpo da
+mensagem citava um nome de ferramenta). A sequência **continuou**:
+
+1. os arquivos do commit 3 permaneceram staged;
+2. o `git add` seguinte acrescentou os arquivos do commit 4;
+3. o commit 4 saiu com os arquivos dos dois escopos, sob a mensagem do 4.
+
+Nenhum erro aparente no fim da execução — só a mensagem do hook no meio da saída.
+
+## Investigação
+
+| Experimento | Resultado |
+|---|---|
+| Na ferramenta de shell do agente: `set -e; false; echo AFTER` | `AFTER` impresso — **continuou** |
+| `zsh -c 'set -e; false; echo x'` | parou, exit 1 |
+| `bash -c 'set -e; false; echo x'` | parou, exit 1 |
+| `zsh -c 'eval "set -e; false; echo x"'` | parou, exit 1 |
+| `git show --name-only HEAD~1` após o incidente | commit 4 continha 12 arquivos (4 do escopo 3 + 8 do 4) |
+
+**Fato:** `set -e` não foi respeitado no ambiente de execução do agente, embora
+funcione em `zsh`/`bash` invocados diretamente.
+
+## Causa raiz
+
+Comandos encadeados com `;` (ou quebra de linha) dependem de `set -e` para
+parar. Quando o shell de execução ignora o `errexit`, uma falha de commit não
+interrompe a sequência e o **staging acumulado** contamina o commit seguinte.
+
+## Hipóteses descartadas
+
+- **Hook não retornou erro:** descartado — o commit 3 não existe no histórico;
+  o hook imprimiu o bloqueio.
+- **`set -e` não funciona no zsh:** descartado — funciona em `zsh -c`.
+
+## Solução adotada (recuperação)
+
+Commits ainda **não publicados**, working tree sem outras alterações:
+
+1. Inspecionar antes de agir: `git log --oneline`, `git show --name-only` de
+   cada commit afetado, `git status`.
+2. Confirmar que nada foi enviado: `git status -sb` sem upstream / `origin/main`
+   inexistente.
+3. `git reset <último-commit-correto>` (**misto**: desfaz commits, mantém
+   arquivos no disco; nada é perdido).
+4. Recriar os commits com cada etapa dependente da anterior via `&&`.
+5. Revalidar: `git show --name-only` por commit, validador, só então push.
+
+## Lacunas
+
+- Mecanismo exato pelo qual o wrapper de shell do agente neutraliza `errexit`
+  não identificado (hipótese: execução dentro de contexto em que o POSIX
+  suspende `errexit`, como condição de `if`/`||`).
+
+## Lições aprendidas
+
+- **Nunca confiar em `set -e`** dentro de ferramentas de execução de agentes.
+  Dependência entre comandos se expressa com `&&` (ou checagem explícita de
+  `$?`/`|| exit 1` por etapa).
+- Uma falha de `git commit` deixa o índice staged; o próximo `git add` + `commit`
+  herda tudo.
+- Recuperação de commits locais: `reset` **misto**, nunca `--hard`, e só depois
+  de confirmar que o histórico não foi publicado e que o working tree não tem
+  trabalho alheio. Commits já publicados: não reescrever — corrigir com novo commit.
+
+## Recomendações futuras
+
+- Preferir um commit por chamada de ferramenta, ou blocos inteiros encadeados
+  com `&&`.
+- Após qualquer sequência de commits: `git log --format='%h %s' -n <N>` e
+  `git show --name-only` de cada um **antes** do push.
+
+## Referências
+
+- Hooks: `git/hooks/commit-msg`, `git/hooks/lib/ai-guard.sh`
+- Projeto: `jeancarlosaps/premium-readme-template` (histórico de `main`)
+
+---
+
+# Automação bem-sucedida não prova resultado correto
+
+## Confidence
+
+🟢 **Validado em produção**
+
+- Checklist aplicado na publicação de `jeancarlosaps/premium-readme-template`;
+  detectou o commit contaminado descrito em
+  [Falha de hook não interrompe sequência de comandos Git](#falha-de-hook-não-interrompe-sequência-de-comandos-git).
+
+## Contexto
+
+Ferramentas de agente devolvem a saída do **último** comando. Uma sequência
+pode terminar com sucesso aparente enquanto uma etapa intermediária falhou ou
+produziu estado diferente do esperado.
+
+## Lições aprendidas
+
+Verificar o **estado**, não a ausência de erro. Depois de cada etapa:
+
+| Verificar | Comando | Esperado |
+|---|---|---|
+| Exit code de cada etapa | `cmd && echo ok` / `$?` | 0 em todas, não só na última |
+| Working tree | `git status --short` (e `--ignored` quando houver artefatos) | só o previsto |
+| Staged | `git diff --cached --name-only` | exatamente o escopo do commit |
+| Histórico | `git log --format='%h %an <%ae> %s'`; `git show --name-only <sha>` | commits, autoria e arquivos corretos |
+| Diff final | `git diff --stat origin/<BASE>...HEAD` | nenhum arquivo fora do escopo |
+| Estado remoto | `git rev-parse HEAD origin/<branch>`; contagem de arquivos via `gh api …/git/trees/<branch>?recursive=1` | local = remoto |
+| CI | `gh run list -R <owner>/<repo> --limit 1` + log do job | `completed success` **e** os passos esperados no log |
+
+Exemplo do log da CI: conferir que o validador imprimiu `PASS` e que nenhuma
+checagem foi pulada (ex.: aviso de ferramenta ausente), não apenas o ✓ verde.
+
+## Recomendações futuras
+
+- Relatórios de entrega citam a evidência de cada verificação (SHA, linha do
+  log, contagem), não apenas "concluído".
+
+## Referências
+
+- `ai/shared/AGENTS.md` — *Fluxo obrigatório antes de QUALQUER operação Git*
