@@ -38,8 +38,8 @@ Contraste calculado pela fórmula de luminância relativa da WCAG 2.2. No `panel
 
 ## Movimento
 
-- Só no `hero.svg`: núcleo, módulos, ligação com o projeto e os três ✓ em sequência; termina em cerca de 2,9 s, sem repetição.
-- Desativado por `prefers-reduced-motion: reduce`.
+- Só no `hero.svg`: o núcleo assenta, módulos e ligações acendem, o cartão do projeto desliza e os três ✓ ganham cor em sequência; termina em 2,8 s, sem repetição.
+- Todo elemento é visível desde o primeiro quadro (nada parte de opacidade 0). As animações ficam dentro de `@media (prefers-reduced-motion: no-preference)`.
 - `hero-still.svg` é gerado a partir do `hero.svg` (blocos `<!-- motion:start -->` / `<!-- motion:end -->`) com o validador do [Premium README Template](https://github.com/jeancarlosaps/premium-readme-template): `node validate-readme.mjs . --write-stills`. Não edite o still à mão.
 
 ## Arquivos
