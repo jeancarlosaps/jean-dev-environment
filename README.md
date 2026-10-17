@@ -105,7 +105,12 @@ AGENTS.md (raiz do projeto)  ──────────┐
 | Cursor | `.cursor/` no projeto | `.cursor/rules/core.mdc` (`alwaysApply: true`) manda seguir o mesmo arquivo |
 
 > [!NOTE]
-> O Cursor só documenta regras em arquivo **por projeto** (`.cursor/rules/`, `AGENTS.md`). Regras globais são as *User Rules* da interface (Customize → Rules), sem caminho de arquivo, por isso o `dev-env` não cria nada em `~/.cursor`. Fora de projetos configurados, cole nas User Rules uma linha como "Siga as regras de `~/Developer/dev-env/ai/shared/AGENTS.md`".
+> **Cursor, conforme a documentação oficial:**
+>
+> - Regras em arquivo existem só **por projeto**: `.cursor/rules/*.mdc` (arquivos `.md` ali são ignorados) e `AGENTS.md` na raiz ou em subpastas.
+> - O `core.mdc` usa `alwaysApply: true`, então entra em toda sessão de chat.
+> - Regras globais são as *User Rules* da interface (Customize → Rules). Elas valem para o Agent (Chat), não para o Inline Edit (Cmd/Ctrl+K), e não têm caminho de arquivo; por isso o `dev-env` não cria nada em `~/.cursor`. Fora de projetos configurados, cole nas User Rules uma linha como "Siga as regras de `~/Developer/dev-env/ai/shared/AGENTS.md`".
+> - A documentação não menciona symlinks. O `dev-env` entrega `.cursor` e `AGENTS.md` como symlinks, e o `validate` confirma que eles resolvem no disco; para confirmar o carregamento, abra as regras do projeto no Cursor uma vez.
 
 Projeto que já tenha um `AGENTS.md` próprio não é sobrescrito: o link é `conflict: skip` e o arquivo local prevalece.
 
@@ -253,7 +258,7 @@ dev-env doctor ~/Developer/Projects/meu-app
 dev-env doctor --all                 # todos os projetos registrados
 ```
 
-Verifica symlink mestre, estrutura `ai/shared`, manifesto, `core.hooksPath`, links da máquina (`machine:`), e por projeto: links quebrados/ausentes/apontando errado, permissões, `info/exclude`, Claude/Cursor/MCP. `--all` usa automaticamente o **perfil registrado de cada projeto**. Sai com código ≠ 0 se houver falha (CI-friendly).
+Verifica symlink mestre, estrutura `ai/shared`, manifesto, `core.hooksPath` e os quatro hooks de guarda (presentes, executáveis e carregando `lib/ai-guard.sh`), links da máquina (`machine:`), e por projeto: links quebrados/ausentes/apontando errado, permissões, `info/exclude`, Claude/Cursor/MCP. `--all` usa automaticamente o **perfil registrado de cada projeto**. Sai com código ≠ 0 se houver falha (CI-friendly).
 
 ## 06 · Configuração
 

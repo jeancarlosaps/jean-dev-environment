@@ -111,17 +111,27 @@ _doctor_environment() {
   fi
 
   # AI-guard hooks (global core.hooksPath)
-  local hooks="$DEV_ENV_STABLE/git/hooks" hookspath h missing_h=""
+  local hooks="$DEV_ENV_STABLE/git/hooks" hookspath h f missing_h="" noexec_h="" wrong_h=""
   hookspath=$(git config --global core.hooksPath 2>/dev/null || true)
   if [ "$hookspath" = "$hooks" ]; then
-    for h in prepare-commit-msg commit-msg pre-push; do
-      [ -x "$DEV_ENV_HOME/git/hooks/$h" ] || missing_h="$missing_h $h"
+    # the four guard hooks must be real executables that load the guard
+    for h in pre-commit prepare-commit-msg commit-msg pre-push; do
+      f="$DEV_ENV_HOME/git/hooks/$h"
+      if [ ! -e "$f" ]; then
+        missing_h="$missing_h $h"
+      elif [ -L "$f" ] || ! grep -q '/lib/ai-guard.sh"' "$f" 2>/dev/null; then
+        wrong_h="$wrong_h $h"
+      elif [ ! -x "$f" ]; then
+        noexec_h="$noexec_h $h"
+      fi
     done
-    if [ -z "$missing_h" ]; then
+    [ -f "$DEV_ENV_HOME/git/hooks/lib/ai-guard.sh" ] || missing_h="$missing_h lib/ai-guard.sh"
+    if [ -z "$missing_h$noexec_h$wrong_h" ]; then
       _dr_ok "AI-guard hooks active (core.hooksPath -> ${hooks/#$HOME/~})"
-    else
-      _dr_fail "AI-guard hooks missing/not executable:$missing_h"
     fi
+    [ -n "$missing_h" ] && _dr_fail "AI-guard hooks missing:$missing_h"
+    [ -n "$noexec_h" ] && _dr_fail "AI-guard hooks not executable:$noexec_h (chmod +x)"
+    [ -n "$wrong_h" ] && _dr_fail "AI-guard hooks do not load lib/ai-guard.sh:$wrong_h"
   elif [ -n "$hookspath" ]; then
     _dr_fail "core.hooksPath aponta para outro lugar: $hookspath (AI guard inativo)"
   else
