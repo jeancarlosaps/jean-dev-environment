@@ -16,10 +16,9 @@ configuração — ele remove o link, o conteúdo continua intacto no
 ~/Developer/
 ├── Projects/
 │   └── <cliente>/
-│       ├── AGENTS.md  ─┐
-│       ├── .claude     │  (symlinks — ignorados pelo git,
-│       ├── .cursor     │   recriáveis a qualquer momento)
-│       └── .mcp.json  ─┘
+│       ├── AGENTS.md  ─┐  (symlinks — ignorados pelo git,
+│       ├── .claude     │   recriáveis a qualquer momento)
+│       └── .cursor    ─┘
 │
 └── dev-env  ──►  Projects/jean-dev-environment   (symlink mestre estável)
 ```
@@ -43,7 +42,7 @@ jean-dev-environment/            (= ~/Developer/dev-env)
 ├── ai/shared/                   # fonte da verdade compartilhada
 │   ├── AGENTS.md                # regras compartilhadas (arquivo dono)
 │   ├── .agents  .claude  .cursor  _bmad
-│   ├── mcp/                     # perfis de MCP (ex.: swift.json)
+│   ├── mcp/                     # configurações de MCP (vazio)
 │   ├── prompts  snippets  templates
 │   └── knowledge  docs
 ├── bootstrap/                   # implementação do CLI (comandos + libs)
@@ -85,7 +84,7 @@ Cria/repara os symlinks de um projeto conforme o perfil.
 
 ```bash
 dev-env project ~/Developer/Projects/meu-app
-dev-env project ~/Developer/Projects/meu-app --profile swift
+dev-env project ~/Developer/Projects/meu-app --profile <nome>
 dev-env project ~/Developer/Projects/meu-app --dry-run    # só mostra
 ```
 
@@ -127,11 +126,11 @@ Smoke tests focados: as ferramentas achariam a config?
 
 ```bash
 dev-env validate ~/Developer/Projects/meu-app
-dev-env validate ~/Developer/Projects/meu-app --profile swift
+dev-env validate ~/Developer/Projects/meu-app --profile <nome>
 ```
 
 Checa: todos os links resolvem, Claude acha `.claude`, Cursor acha
-`.cursor`, MCP `.mcp.json` é JSON válido. Sai com código ≠ 0 se algo
+`.cursor` e, quando um perfil linka `.mcp.json`, que ele é JSON válido. Sai com código ≠ 0 se algo
 falhar.
 
 ---
@@ -163,7 +162,7 @@ dev-env init
 git clone <cliente> ~/Developer/Projects/novo
 
 # 3. criar os links (escolha o perfil se precisar)
-dev-env project ~/Developer/Projects/novo --profile swift
+dev-env project ~/Developer/Projects/novo
 
 # 4. conferir
 dev-env validate ~/Developer/Projects/novo
@@ -209,14 +208,6 @@ profiles:
         target: .claude
       - source: ai/shared/.cursor
         target: .cursor
-
-  swift:
-    extends: default            # herda os links do default
-    profileVersion: 1
-    links:
-      - source: ai/shared/mcp/swift.json
-        target: .mcp.json
-        required: false
 ```
 
 - `source` é relativo à raiz do `dev-env`; `target` é relativo à raiz do
@@ -229,13 +220,11 @@ profiles:
 
 ---
 
-## 🎛️ Perfis (`default`, `swift`)
+## 🎛️ Perfis
 
 - **`default`** — o conjunto compartilhado por todo projeto: o
   `AGENTS.md` na raiz (convenção lida por diversos agentes) mais os
   adapters `.claude` e `.cursor`, que apenas apontam para ele.
-- **`swift`** — `extends: default` e acrescenta o `.mcp.json` do perfil
-  Swift.
 
 Novo perfil = novas linhas no manifesto (com `extends` quando fizer
 sentido). O perfil usado por cada projeto fica gravado no registro, então
