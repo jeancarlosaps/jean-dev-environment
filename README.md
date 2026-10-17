@@ -319,18 +319,21 @@ Novo perfil = novas linhas no manifesto (com `extends` quando fizer sentido). O 
 O `init` aponta o `core.hooksPath` global para `git/hooks/`. A partir daí, todo repositório da máquina passa por quatro hooks de guarda:
 
 ```mermaid
-flowchart LR
-  C["git commit"] --> PC["pre-commit<br/>artefatos de IA · identidade"]
-  PC --> PM["prepare-commit-msg<br/>remove trailers de IA"]
-  PM --> CM["commit-msg<br/>remove trailers · bloqueia<br/>menção a IA e coautoria"]
-  CM --> OK[("commit")]
-  OK --> P["git push"] --> PP["pre-push<br/>revalida mensagem<br/>e identidade de cada commit"]
-  classDef git fill:#1B1E24,stroke:#2A2F38,color:#ECEFF4
+flowchart TB
+  subgraph COMMIT["git commit"]
+    direction LR
+    PC["pre-commit<br/>artefatos de IA<br/>identidade"] --> PM["prepare-commit-msg<br/>remove trailers"]
+    PM --> CM["commit-msg<br/>bloqueia menção<br/>e coautoria"]
+  end
+  subgraph PUSH["git push"]
+    direction LR
+    PP["pre-push<br/>revalida cada commit"] --> R[("remoto")]
+  end
+  CM --> PP
   classDef hook fill:#1B1E24,stroke:#7FA2F2,color:#ECEFF4
   classDef done fill:#8FD19E,stroke:#8FD19E,color:#121418
-  class C,P git
   class PC,PM,CM,PP hook
-  class OK done
+  class R done
 ```
 
 | Hook | Bloqueia ou corrige |
