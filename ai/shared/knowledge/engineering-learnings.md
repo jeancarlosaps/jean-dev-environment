@@ -15,6 +15,40 @@ Todo agente deve:
 4. Atualizar um aprendizado existente sempre que ele evoluir, em vez de criar um documento duplicado.
 5. Registrar a **regra** resultante no `AGENTS.md` e manter aqui apenas o **aprendizado** e suas evidências.
 
+## O que registrar
+
+Registrar o que tem valor para uma investigação futura: causa raiz,
+decisão arquitetural, diferença de comportamento entre plataformas ou
+frameworks, workaround descartado e por quê, solução adotada e ajustes
+posteriores.
+
+Não registrar bugs triviais, mudanças pequenas, ajustes de layout sem
+valor arquitetural nem tarefas rotineiras. Manter o documento conciso:
+não é documentação funcional nem ADR.
+
+O repositório é público: nada de nomes de clientes, produtos ou
+organizações privadas, caminhos pessoais, segredos ou URLs internas.
+Use nomes genéricos (ex.: `DSUIListContent`, "repositório privado do
+design system").
+
+## Estrutura de uma entrada
+
+```markdown
+# Título
+
+## Confidence
+## Contexto
+## Investigação
+## Causa raiz
+## Hipóteses descartadas    (quando houver)
+## Solução adotada
+## Ajustes posteriores      (quando houver)
+## Lacunas                  (quando houver)
+## Lições aprendidas
+## Recomendações futuras
+## Referências
+```
+
 > Este documento complementa as regras do projeto.
 > Ele registra decisões arquiteturais e aprendizados obtidos durante investigações reais.
 
@@ -215,16 +249,16 @@ Quando implementar componentes semelhantes (sheets, drawers, overlays com input)
 
 ## Contexto
 
-Report do produto (VirtuCard): `BradsButtonIcon` (SwiftUI) hospedado no
-`trailingItem: UIView` do `BradsUIListContent` renderizava mas não recebia
+Report do produto (app consumidor): `DSButtonIcon` (SwiftUI) hospedado no
+`trailingItem: UIView` do `DSUIListContent` renderizava mas não recebia
 clique. O time suspeitava do hosting/adapter.
 
 ## Investigação
 
 - Hosting **não** era o problema: `UIButton` UIKit puro no mesmo slot falhava igual.
-- `BradsUIListLine.configurePressHandling()` fazia `isUserInteractionEnabled = false`
+- `DSUIListLine.configurePressHandling()` fazia `isUserInteractionEnabled = false`
   quando `onPress == nil` — em UIKit isso exclui **toda a subárvore** do hit-testing.
-- `BradsUIListContent` sempre cria o ListLine com `onPress: nil` → slots mortos.
+- `DSUIListContent` sempre cria o ListLine com `onPress: nil` → slots mortos.
 - Acessibilidade agravava: row achatada em um único elemento `.staticText` e
   slots com `isAccessibilityElement = false` → accessory interativo invisível
   ao VoiceOver.
@@ -248,7 +282,7 @@ Branch `fix/list-line-accessory-interaction` (DS iOS):
    tratam o próprio toque.
 3. Heurística genérica (`UIView+InteractiveDescendant.swift`, internal):
    `UIControl` || gesture recognizers habilitados (cobre `_UIHostingView`) ||
-   elemento de acessibilidade com trait interativo (cobre `BradsUISwitch`,
+   elemento de acessibilidade com trait interativo (cobre `DSUISwitch`,
    que trata toque via `touchesBegan`).
 4. Acessibilidade em camadas no ListContent: com accessory interativo a row
    vira container (`accessibilityElements` = accessory + conteúdo agrupado);
@@ -268,7 +302,7 @@ interativos → row inteira continua sendo o alvo.
   (ao entrar na window) — detecção de interatividade precisa reavaliar em
   `didMoveToWindow`.
 - `swift test` (macOS) não valida o DS; a suíte real roda via
-  `xcodebuild test -scheme BdsCore` em iOS Simulator.
+  `xcodebuild test -scheme DSCore` em iOS Simulator.
 
 ## Recomendações futuras
 
@@ -280,9 +314,9 @@ interativos → row inteira continua sendo o alvo.
 
 - Investigação: `docs/local/INVESTIGACAO_LISTCONTENT_TRAILING_INTERACTION.md` (DS iOS)
 - PR #39 (origem do ListLine/ListContent UIKit, 2026-05-19)
-- Arquivos: `Sources/BradsCoreUIKit/Components/ListLine/BdsUIListLine.swift`,
-  `Sources/BradsCoreUIKit/Components/ListContent/BdsUIListContent.swift`,
-  `Sources/BradsCoreUIKit/Extensions/UIView+InteractiveDescendant.swift`
+- Arquivos: `Sources/DesignSystemUIKit/Components/ListLine/DSUIListLine.swift`,
+  `Sources/DesignSystemUIKit/Components/ListContent/DSUIListContent.swift`,
+  `Sources/DesignSystemUIKit/Extensions/UIView+InteractiveDescendant.swift`
 
 ---
 
@@ -296,7 +330,7 @@ interativos → row inteira continua sendo o alvo.
 
 ## Contexto
 
-Durante a evolução de `BradsUIHeading` e `BradsUIDescription`, surgiu a
+Durante a evolução de `DSUIHeading` e `DSUIDescription`, surgiu a
 necessidade de adicionar suporte à customização de cor de texto nos
 componentes UIKit do DS.
 
@@ -320,13 +354,13 @@ Levantamento completo antes de qualquer proposta de API:
   removido; o UIKit simplesmente nunca o recebeu.
 - Figma — a spec usa tokens padrão (`text-color/heading`,
   `text-color/description`, `inverse/*`); não define enum semântico de cor.
-- Padrão já consolidado em outros componentes UIKit (`BradsUIParagraph`,
-  `BradsUILabel`, `BdsIcon`): `color: Color?` + `update(color: Color?? = .none)`.
+- Padrão já consolidado em outros componentes UIKit (`DSUIParagraph`,
+  `DSUILabel`, `DSIcon`): `color: Color?` + `update(color: Color?? = .none)`.
 
 Alternativas descartadas:
 
-- `foregroundColor: BradsColor?` — nome divergente do resto do DS e
-  `BradsColor` não é tipo de parâmetro (é paleta de helpers no Adapter).
+- `foregroundColor: DSColor?` — nome divergente do resto do DS e
+  `DSColor` não é tipo de parâmetro (é paleta de helpers no Adapter).
 - Token/enum semântico novo — sem respaldo no Figma nem no Android;
   `inverse` já cobre o caso semântico oficial.
 
@@ -345,12 +379,12 @@ criada sem ele e nunca foi alinhada.
 Alinhar o UIKit ao contrato já consolidado, sem criar API nova:
 
 - `public var color: Color?` + `init(..., color: Color? = nil)` +
-  `update(..., color: Color?? = .none)` em `BradsUIHeading` e
-  `BradsUIDescription`.
+  `update(..., color: Color?? = .none)` em `DSUIHeading` e
+  `DSUIDescription`.
 - Precedência idêntica ao SwiftUI e ao Android:
   `color` custom → `inverse` → token padrão do tema.
 - Links do Description **não** são afetados pelo override do corpo.
-- **Não** copiar o comportamento do `BradsUIParagraph`, que possui uma
+- **Não** copiar o comportamento do `DSUIParagraph`, que possui uma
   inconsistência conhecida onde `inverse` vence `color`.
 
 Resultado: mesma API pública, mesma precedência, mesma semântica,
@@ -397,11 +431,11 @@ Esse padrão deve ser seguido em futuras evoluções de:
 
 ## Referências
 
-- PR #102 (liquid-design-system-ios) — commit `28a5daa`
-- `Sources/BradsCoreUIKit/Components/Heading/BdsHeading.swift`
-- `Sources/BradsCoreUIKit/Components/Description/BdsDescription.swift`
-- Contrapartes: `BradsHeading` / `BradsDescription` (SwiftUI) e
-  `BradsHeading` / `BradsDescription` (Android, Compose)
+- PR #102 (repositório privado do design system) — commit `28a5daa`
+- `Sources/DesignSystemUIKit/Components/Heading/DSHeading.swift`
+- `Sources/DesignSystemUIKit/Components/Description/DSDescription.swift`
+- Contrapartes: `DSHeading` / `DSDescription` (SwiftUI) e
+  `DSHeading` / `DSDescription` (Android, Compose)
 
 ---
 
@@ -444,7 +478,7 @@ que a hierarquia de views sugere. As ferramentas usuais falham:
 Ao caminhar a hierarquia de um app SwiftUI dentro do processo, todos os nós
 aparecem vazios: nenhum rótulo, nenhuma trait, contagem de elementos zero.
 A mesma varredura em telas UIKit devolve os elementos normalmente
-(`BradsUIHeading`, `UILabel`, etc.).
+(`DSUIHeading`, `UILabel`, etc.).
 
 A diferença é que o UIKit **é** a árvore de acessibilidade — cada `UIView`
 implementa o protocolo informal `UIAccessibility`. Já o SwiftUI mantém uma
@@ -642,11 +676,11 @@ no relatório, para que a conclusão possa ser reconferida depois.
 
 ## Referências
 
-- `Sources/BradsCore/Components/Content/Icon/Icon.swift` — caso típico de
+- `Sources/DesignSystem/Components/Content/Icon/Icon.swift` — caso típico de
   ícone decorativo cuja exposição só é observável no dump.
-- `Sources/BradsCore/Layout/Card/Base/Card+Base.swift` — estratégia
+- `Sources/DesignSystem/Layout/Card/Base/Card+Base.swift` — estratégia
   `.contain` / `.ignore` cujo efeito real só se comprova na árvore.
-- `Sources/BradsCoreUIKit/Components/Icon/BdsIcon.swift` — contraparte UIKit,
+- `Sources/DesignSystemUIKit/Components/Icon/DSIcon.swift` — contraparte UIKit,
   onde a árvore existe sem depender do runtime de automação.
 - `/usr/lib/libAccessibility.dylib` — `_AXSSetAutomationEnabled` /
   `_AXSAutomationEnabled` (API privada, uso restrito a investigação local).
@@ -825,9 +859,9 @@ Isso evita correções locais para problemas sistêmicos e reduz regressões.
 
 ## Referências
 
-- `Sources/BradsCore/Layout/Input/Base/InputTransformedTextField.swift`
-- `Sources/BradsCore/Layout/Input/Base/Input+Base.swift`
-- `Tests/BdsCoreTests/Components/Inputs/InputTransformedTextFieldTests.swift`
+- `Sources/DesignSystem/Layout/Input/Base/InputTransformedTextField.swift`
+- `Sources/DesignSystem/Layout/Input/Base/Input+Base.swift`
+- `Tests/DSCoreTests/Components/Inputs/InputTransformedTextFieldTests.swift`
 - Contraparte Android: `layout/input/base/InputBase.kt` — no Compose a máscara é
   `VisualTransformation` no próprio `BasicTextField`: mesmo widget, mesma
   medição, foco com dono único.
@@ -914,9 +948,9 @@ Sempre que um componente precisar reproduzir HUG do Figma em UIKit:
 
 ## Referências
 
-- PR: https://github.com/raio-work/liquid-design-system-ios/pull/114
-- Arquivos: `Sources/BradsCoreUIKit/Components/ListAction/BdsUIListAction.swift`
-- Testes: `Tests/BdsCoreTests/UIKit/BdsUIListActionTests.swift`
+- PR #114 (repositório privado do design system)
+- Arquivos: `Sources/DesignSystemUIKit/Components/ListAction/DSUIListAction.swift`
+- Testes: `Tests/DSCoreTests/UIKit/DSUIListActionTests.swift`
 
 ---
 
@@ -934,8 +968,8 @@ Durante investigação de VoiceOver verbalizando nomes técnicos de ícone
 (`System Interface Image` / família `system_*`), ficou claro que UIKit e SwiftUI
 implementavam contratos diferentes para componentes equivalentes.
 
-SwiftUI (`BradsIcon` / `BradsIconShape`) tratava ícones como decorativos por
-padrão. UIKit (`BradsUIIcon` / `BradsUIIconShape`) sempre expunha o ícone ao
+SwiftUI (`DSIcon` / `DSIconShape`) tratava ícones como decorativos por
+padrão. UIKit (`DSUIIcon` / `DSUIIconShape`) sempre expunha o ícone ao
 VoiceOver e gerava automaticamente um `accessibilityLabel` técnico a partir do
 enum.
 
@@ -943,7 +977,7 @@ enum.
 
 ## Investigação
 
-- A divergência estava no primitivo UIKit (`BradsUIIcon`), não no Shortcut
+- A divergência estava no primitivo UIKit (`DSUIIcon`), não no Shortcut
   SwiftUI (que já agrupava corretamente).
 - Diversos consumidores compostos já forçavam `isAccessibilityElement = false`
   no ícone — compensando um contrato incorreto do primitivo.
@@ -967,7 +1001,7 @@ Alinhar UIKit ao contrato SwiftUI no primitivo:
 - default decorativo (`isAccessibilityElement = false` sem label);
 - `accessibilityLabel` opt-in;
 - sem gerar label técnica automaticamente a partir do enum;
-- `BradsUIIconShape` só expõe elemento quando há label própria;
+- `DSUIIconShape` só expõe elemento quando há label própria;
 - `accessibilityLabelText` como fonte única de verdade; `UIView.accessibilityLabel`
   apenas como alias/forward.
 
@@ -998,13 +1032,13 @@ Para componentes equivalentes entre UIKit e SwiftUI:
 
 ## Referências
 
-- PR: https://github.com/raio-work/liquid-design-system-ios/pull/115
+- PR #115 (repositório privado do design system)
 - Arquivos:
-  `Sources/BradsCoreUIKit/Components/Icon/BdsIcon.swift`,
-  `Sources/BradsCoreUIKit/Components/IconShape/BdsUIIconShape.swift`
+  `Sources/DesignSystemUIKit/Components/Icon/DSIcon.swift`,
+  `Sources/DesignSystemUIKit/Components/IconShape/DSUIIconShape.swift`
 - Testes:
-  `Tests/BdsCoreTests/UIKit/BdsUIIconTests.swift`,
-  `Tests/BdsCoreTests/UIKit/BdsUIIconShapeTests.swift`
+  `Tests/DSCoreTests/UIKit/DSUIIconTests.swift`,
+  `Tests/DSCoreTests/UIKit/DSUIIconShapeTests.swift`
 - Relacionado: learning de inspeção AX via LLDB (mesmo documento).
 
 ---
@@ -1123,18 +1157,18 @@ pelo usuário, e não os valores utilizados pelas APIs.
 
 ## Referências
 
-- PR: https://github.com/raio-work/liquid-design-system-ios/pull/116
+- PR #116 (repositório privado do design system)
 - Arquivos:
-  `Sources/BradsCore/Components/Containers/BottomSheet/Base/BottomSheetAccessibilitySortPriority.swift`,
-  `Sources/BradsCore/Components/Containers/BottomSheet/Base/DrawerHeader.swift`,
-  `Sources/BradsCore/Components/Containers/BottomSheet/Base/Drawer.swift`,
-  `Sources/BradsCore/Components/Containers/BottomSheet/Base/SuperDrawer.swift`
+  `Sources/DesignSystem/Components/Containers/BottomSheet/Base/BottomSheetAccessibilitySortPriority.swift`,
+  `Sources/DesignSystem/Components/Containers/BottomSheet/Base/DrawerHeader.swift`,
+  `Sources/DesignSystem/Components/Containers/BottomSheet/Base/Drawer.swift`,
+  `Sources/DesignSystem/Components/Containers/BottomSheet/Base/SuperDrawer.swift`
 - Relacionado: learning de inspeção AX via LLDB (mesmo documento);
   learning de Window Metrics / Keyboard do BottomSheet (mesmo documento).
 
 ---
 
-# Evolução da API UIKit da família List (`BradsUIListContentProps`)
+# Evolução da API UIKit da família List (`DSUIListContentProps`)
 
 ## Confidence
 
@@ -1150,7 +1184,7 @@ ainda estava em revisão no momento deste registro.
 
 A iniciativa SonarQube no Design System iOS apontou violações de S107
 (Functions should not have too many parameters) nos inits/updates de
-`BradsUIListContent`, `BradsUIListAction` e `BradsUIListSelect`. Além do
+`DSUIListContent`, `DSUIListAction` e `DSUIListSelect`. Além do
 métrico, as APIs multi-parâmetro e o contrato tri-state (`String??` /
 `UIView??`) dificultavam manutenção e geravam duplicação de contrato entre
 componentes que compartilhavam o mesmo núcleo visual de conteúdo bicoluna.
@@ -1178,7 +1212,7 @@ A conclusão foi adotar um **Props de domínio compartilhado** — value-type
 explícito, limitado ao núcleo realmente comum — e preservar slots, callbacks
 e estados específicos fora desse objeto.
 
-Também foi investigado se `BradsUIListCurrency` deveria entrar no mesmo
+Também foi investigado se `DSUIListCurrency` deveria entrar no mesmo
 contrato. Conclusão: não. Currency é domínio especializado (texto + moeda
 obrigatória + avatar tipado), distinto do núcleo polimórfico
 texto/moeda bicoluna + slots genéricos.
@@ -1200,7 +1234,7 @@ tri-state. Isso gerava:
 
 ## Solução adotada
 
-Criação de `BradsUIListContentProps` e migração dos três componentes para:
+Criação de `DSUIListContentProps` e migração dos três componentes para:
 
 - `init(content:...)`
 - `update(content:)`
@@ -1216,9 +1250,9 @@ Regras do contrato:
 
 ### Componentes impactados
 
-- `BradsUIListContent`
-- `BradsUIListAction`
-- `BradsUIListSelect`
+- `DSUIListContent`
+- `DSUIListAction`
+- `DSUIListSelect`
 
 ### Sonar
 
@@ -1228,13 +1262,13 @@ Regras do contrato:
 
 ### Decisão arquitetural — Currency fora do escopo
 
-`BradsUIListCurrency` **não** participou desta evolução.
+`DSUIListCurrency` **não** participou desta evolução.
 
 Motivo: após investigação, concluiu-se que representa domínio especializado
 (texto + moeda + avatar), diferente do núcleo compartilhado Content/Action/Select.
 
-Se for evoluído no futuro, deve usar um `BradsUIListCurrencyProps` próprio,
-em iniciativa independente — sem forçar `BradsUIListContentProps`.
+Se for evoluído no futuro, deve usar um `DSUIListCurrencyProps` próprio,
+em iniciativa independente — sem forçar `DSUIListContentProps`.
 
 ---
 
@@ -1253,7 +1287,7 @@ em iniciativa independente — sem forçar `BradsUIListContentProps`.
 ## Recomendações futuras
 
 - Futuras evoluções da família List devem reutilizar
-  `BradsUIListContentProps` quando o domínio for o mesmo núcleo bicoluna
+  `DSUIListContentProps` quando o domínio for o mesmo núcleo bicoluna
   polimórfico + slots genéricos.
 - Componentes especializados devem possuir seus próprios Props.
 - Não reintroduzir tri-state / patch multi-parâmetro no núcleo migrado.
@@ -1265,19 +1299,19 @@ em iniciativa independente — sem forçar `BradsUIListContentProps`.
 ## Referências
 
 - PRs stacked (base `feat/list-api-evolution`):
-  - https://github.com/raio-work/liquid-design-system-ios/pull/121
-  - https://github.com/raio-work/liquid-design-system-ios/pull/122
-  - https://github.com/raio-work/liquid-design-system-ios/pull/123
-  - https://github.com/raio-work/liquid-design-system-ios/pull/124
+  - PR #121 (repositório privado do design system)
+  - PR #122 (repositório privado do design system)
+  - PR #123 (repositório privado do design system)
+  - PR #124 (repositório privado do design system)
 - PR final da iniciativa:
-  - https://github.com/raio-work/liquid-design-system-ios/pull/125
+  - PR #125 (repositório privado do design system)
 - Sample:
-  - https://github.com/raio-work/liquid-sample-ios/pull/42
+  - PR #42 (repositório privado do app de exemplo)
 - Arquivos:
-  - `Sources/BradsCoreUIKit/Components/ListContent/BradsUIListContentProps.swift`
-  - `Sources/BradsCoreUIKit/Components/ListContent/BdsUIListContent.swift`
-  - `Sources/BradsCoreUIKit/Components/ListAction/BdsUIListAction.swift`
-  - `Sources/BradsCoreUIKit/Components/ListSelect/BdsUIListSelect.swift`
+  - `Sources/DesignSystemUIKit/Components/ListContent/DSUIListContentProps.swift`
+  - `Sources/DesignSystemUIKit/Components/ListContent/DSUIListContent.swift`
+  - `Sources/DesignSystemUIKit/Components/ListAction/DSUIListAction.swift`
+  - `Sources/DesignSystemUIKit/Components/ListSelect/DSUIListSelect.swift`
 - Docs:
   - `docs/lists/ListContent.md`
   - `docs/lists/ListAction.md`
@@ -1296,7 +1330,8 @@ em iniciativa independente — sem forçar `BradsUIListContentProps`.
 
 ## Contexto
 
-Projeto Flutter (`dinna-flutter`) dentro de `~/Developer/Projects/PósMobile-UTFPR/…`.
+Projeto Flutter (`dinna-flutter`) dentro de um caminho com caractere não ASCII
+(ex.: `~/Projetos/Pós/…`).
 Flutter 3.47.7 stable / Dart 3.13.5, macOS arm64. `flutter analyze` abortava;
 `flutter test` e `dart format` funcionavam normalmente.
 
