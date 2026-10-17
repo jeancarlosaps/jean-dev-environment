@@ -16,8 +16,8 @@
 #                 target readable; .git/info/exclude wired
 #   tools       : .claude / .cursor resolve to a dir; *.json is valid JSON
 #
-# Uses profile ${PROFILE:-default} for project checks (the registry only
-# stores paths, not profiles).
+# Profile per project: --all reads the profile stored for each project in
+# the registry; an explicit <path> uses ${PROFILE:-default}.
 #
 # Globals from bin/dev-env: DEV_ENV_HOME DEV_ENV_STABLE MANIFEST
 #                           PROFILE STATE_DIR

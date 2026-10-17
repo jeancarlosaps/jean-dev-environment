@@ -55,7 +55,11 @@ mutate() {
 
 # --- final report ----------------------------------------------------
 log_report() {
-  printf '\n%s\n' "${LOG_C_BLUE}── report ──────────────────────────────${LOG_C_RESET}"
+  if [ "${DRY_RUN:-0}" = "1" ]; then
+    printf '\n%s\n' "${LOG_C_BLUE}── report (DRY RUN — nothing was changed) ──${LOG_C_RESET}"
+  else
+    printf '\n%s\n' "${LOG_C_BLUE}── report ──────────────────────────────${LOG_C_RESET}"
+  fi
   printf '  created:   %s\n' "$LOG_CREATED"
   printf '  repaired:  %s\n' "$LOG_REPAIRED"
   printf '  skipped:   %s\n' "$LOG_SKIPPED"
