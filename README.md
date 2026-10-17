@@ -253,7 +253,7 @@ dev-env doctor ~/Developer/Projects/meu-app
 dev-env doctor --all                 # todos os projetos registrados
 ```
 
-Verifica symlink mestre, estrutura `ai/shared`, manifesto, `core.hooksPath`, links da máquina (`machine:`), e por projeto: links quebrados/ausentes/apontando errado, permissões, `info/exclude`, Claude/Cursor/MCP. `--all` usa automaticamente o **perfil registrado de cada projeto**. Sai com código ≠ 0 se houver falha (CI-friendly).
+Verifica symlink mestre, estrutura `ai/shared`, manifesto, `core.hooksPath` e os quatro hooks de guarda (presentes, executáveis e carregando `lib/ai-guard.sh`), links da máquina (`machine:`), e por projeto: links quebrados/ausentes/apontando errado, permissões, `info/exclude`, Claude/Cursor/MCP. `--all` usa automaticamente o **perfil registrado de cada projeto**. Sai com código ≠ 0 se houver falha (CI-friendly).
 
 ## 06 · Configuração
 
