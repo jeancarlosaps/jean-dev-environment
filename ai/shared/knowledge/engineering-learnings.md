@@ -914,7 +914,7 @@ Sempre que um componente precisar reproduzir HUG do Figma em UIKit:
 
 ## Referências
 
-- PR: https://github.com/private-org/repositório privado do design system/pull/114
+- PR #114 (repositório privado do design system)
 - Arquivos: `Sources/DesignSystemUIKit/Components/ListAction/DSUIListAction.swift`
 - Testes: `Tests/DSCoreTests/UIKit/DSUIListActionTests.swift`
 
@@ -998,7 +998,7 @@ Para componentes equivalentes entre UIKit e SwiftUI:
 
 ## Referências
 
-- PR: https://github.com/private-org/repositório privado do design system/pull/115
+- PR #115 (repositório privado do design system)
 - Arquivos:
   `Sources/DesignSystemUIKit/Components/Icon/DSIcon.swift`,
   `Sources/DesignSystemUIKit/Components/IconShape/DSUIIconShape.swift`
@@ -1123,7 +1123,7 @@ pelo usuário, e não os valores utilizados pelas APIs.
 
 ## Referências
 
-- PR: https://github.com/private-org/repositório privado do design system/pull/116
+- PR #116 (repositório privado do design system)
 - Arquivos:
   `Sources/DesignSystem/Components/Containers/BottomSheet/Base/BottomSheetAccessibilitySortPriority.swift`,
   `Sources/DesignSystem/Components/Containers/BottomSheet/Base/DrawerHeader.swift`,
@@ -1265,14 +1265,14 @@ em iniciativa independente — sem forçar `DSUIListContentProps`.
 ## Referências
 
 - PRs stacked (base `feat/list-api-evolution`):
-  - https://github.com/private-org/repositório privado do design system/pull/121
-  - https://github.com/private-org/repositório privado do design system/pull/122
-  - https://github.com/private-org/repositório privado do design system/pull/123
-  - https://github.com/private-org/repositório privado do design system/pull/124
+  - PR #121 (repositório privado do design system)
+  - PR #122 (repositório privado do design system)
+  - PR #123 (repositório privado do design system)
+  - PR #124 (repositório privado do design system)
 - PR final da iniciativa:
-  - https://github.com/private-org/repositório privado do design system/pull/125
+  - PR #125 (repositório privado do design system)
 - Sample:
-  - https://github.com/private-org/repositório privado do app de exemplo/pull/42
+  - PR #42 (repositório privado do app de exemplo)
 - Arquivos:
   - `Sources/DesignSystemUIKit/Components/ListContent/DSUIListContentProps.swift`
   - `Sources/DesignSystemUIKit/Components/ListContent/DSUIListContent.swift`
@@ -1296,7 +1296,8 @@ em iniciativa independente — sem forçar `DSUIListContentProps`.
 
 ## Contexto
 
-Projeto Flutter (`dinna-flutter`) dentro de um caminho com caractere não ASCII (ex.: `~/Projetos/Pós/…`).
+Projeto Flutter (`dinna-flutter`) dentro de um caminho com caractere não ASCII
+(ex.: `~/Projetos/Pós/…`).
 Flutter 3.47.7 stable / Dart 3.13.5, macOS arm64. `flutter analyze` abortava;
 `flutter test` e `dart format` funcionavam normalmente.
 
