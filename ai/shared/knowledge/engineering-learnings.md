@@ -1694,3 +1694,50 @@ checagem foi pulada (ex.: aviso de ferramenta ausente), não apenas o ✓ verde.
 ## Referências
 
 - `ai/shared/AGENTS.md` — *Fluxo obrigatório antes de QUALQUER operação Git*
+
+---
+
+# Configuração global de agentes: o que cada ferramenta lê fora do projeto
+
+## Confidence
+
+🟡 **Validado em laboratório / POC**
+
+- Mecanismo testado em sandbox (`HOME` isolado) e aplicado na máquina de referência; comportamento das ferramentas conforme a documentação oficial consultada em 2026-10-17.
+
+## Contexto
+
+As regras compartilhadas chegavam aos projetos pelos links do manifesto, mas os links globais (`~/.claude/CLAUDE.md`, `~/.cursor/rules/*.mdc`) tinham sido criados à mão: uma máquina nova não os recebia, e um deles ficou quebrado quando a regra de destino foi removida, sem que o `doctor` percebesse.
+
+## Investigação
+
+| Ferramenta | Documentação oficial | Conclusão |
+|---|---|---|
+| Claude Code | `~/.claude/CLAUDE.md` é a memória de escopo de usuário; imports `@~/…` são suportados (até 4 níveis) | Um link para `ai/shared/.claude/CLAUDE.md` vale em qualquer repositório |
+| Cursor | Regras em arquivo só por projeto (`.cursor/rules/*.mdc`, `AGENTS.md`); regras globais são *User Rules* na interface, sem caminho de arquivo | `~/.cursor/rules/` não é mecanismo documentado; não automatizar |
+
+## Causa raiz
+
+Links globais fora do manifesto: sem declaração, não há instalação reproduzível, diagnóstico nem remoção segura.
+
+## Solução adotada
+
+- Seção `machine:` no `manifest/links.yaml`, com o mesmo esquema dos links de perfil e `target` relativo ao `$HOME`, aplicada pelo `dev-env init` com o mesmo `link_apply`.
+- `conflict: skip`: arquivo pessoal nunca é substituído; o `doctor` avisa.
+- `state/machine-links` registra o que a máquina recebeu; um link retirado do manifesto só é removido se ainda for symlink para o `dev-env`.
+- Cursor: regras por projeto (`dev-env project`) e, fora deles, uma linha manual nas User Rules.
+
+## Lições aprendidas
+
+- Antes de automatizar um caminho de configuração de ferramenta, confirmar na documentação atual que ele é lido; caminho "que parece funcionar" vira configuração morta.
+- Todo link criado pelo ambiente precisa estar declarado, para ser recriável, auditável e removível.
+
+## Recomendações futuras
+
+- Reavaliar quando o Cursor documentar um local de arquivo para regras globais.
+
+## Referências
+
+- `manifest/links.yaml` (`machine:`), `bootstrap/commands/init.sh` (`_init_machine_links`), `bootstrap/commands/doctor.sh` (`_doctor_machine`)
+- <https://code.claude.com/docs/en/memory>
+- <https://cursor.com/docs/context/rules>
