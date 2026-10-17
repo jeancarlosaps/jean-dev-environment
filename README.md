@@ -54,10 +54,9 @@ O `dev-env` inverte isso. O conteúdo real mora **fora** dos repositórios de cl
 ~/Developer/
 ├── Projects/
 │   └── <cliente>/
-│       ├── AGENTS.md  ─┐
-│       ├── .claude     │  (symlinks — ignorados pelo git,
-│       ├── .cursor     │   recriáveis a qualquer momento)
-│       └── .mcp.json  ─┘
+│       ├── AGENTS.md  ─┐  (symlinks — ignorados pelo git,
+│       ├── .claude     │   recriáveis a qualquer momento)
+│       └── .cursor    ─┘
 │
 └── dev-env  ──►  Projects/jean-dev-environment   (symlink mestre estável)
 ```
@@ -67,13 +66,10 @@ O `dev-env` inverte isso. O conteúdo real mora **fora** dos repositórios de cl
 - Um **manifesto declarativo** (`manifest/links.yaml`) descreve quais links cada projeto recebe.
 - Um **CLI** (`dev-env`) cria, migra, valida, audita e repara tudo de forma idempotente.
 
-> [!NOTE]
-> O `.mcp.json` só existe no perfil `swift` e é opcional. Hoje a fonte `ai/shared/mcp/swift.json` não está no repositório, então o link é pulado (`optional source missing, skipping`).
-
 ### Arquitetura
 
 <p align="center">
-  <img src="docs/assets/readme/architecture.svg" alt="Arquitetura em três colunas. Repositório: bin/dev-env, manifest/links.yaml, ai/shared, git/hooks, bootstrap, state e backups. dev-env project: resolve o perfil, aplica cada link (mantém, recria, backup, skip ou fail), escreve .git/info/exclude e registra o projeto. Projeto: symlinks AGENTS.md, .claude e .cursor, .mcp.json opcional do perfil swift, e .git/info/exclude. Os symlinks resolvem para ai/shared via ~/Developer/dev-env." width="1600" />
+  <img src="docs/assets/readme/architecture.svg" alt="Arquitetura em três colunas. Repositório: bin/dev-env, manifest/links.yaml, ai/shared, git/hooks, bootstrap, state e backups. dev-env project: resolve o perfil, aplica cada link (mantém, recria, backup, skip ou fail), escreve .git/info/exclude e registra o projeto. Projeto: symlinks AGENTS.md, .claude e .cursor, e .git/info/exclude. Os symlinks resolvem para ai/shared via ~/Developer/dev-env." width="1600" />
 </p>
 
 | Componente | Responsabilidade | Onde |
@@ -107,7 +103,6 @@ AGENTS.md (raiz do projeto)  ──────────┐
 | Agentes que leem `AGENTS.md` | `AGENTS.md` na raiz (symlink) | Diretamente |
 | Claude Code | `.claude/` (symlink) | `.claude/CLAUDE.md` importa `@~/Developer/dev-env/ai/shared/AGENTS.md` |
 | Cursor | `.cursor/` (symlink) | `.cursor/rules/core.mdc` (`alwaysApply: true`) manda seguir o mesmo arquivo |
-| MCP | `.mcp.json`, só no perfil `swift` | Fonte ainda ausente; ver a nota acima |
 
 Projeto que já tenha um `AGENTS.md` próprio não é sobrescrito: o link é `conflict: skip` e o arquivo local prevalece.
 
@@ -179,7 +174,7 @@ dev-env init
 git clone <cliente> ~/Developer/Projects/novo
 
 # 3. criar os links (escolha o perfil se precisar)
-dev-env project ~/Developer/Projects/novo --profile swift
+dev-env project ~/Developer/Projects/novo
 
 # 4. conferir
 dev-env validate ~/Developer/Projects/novo
@@ -206,7 +201,7 @@ Cria/repara os symlinks de um projeto conforme o perfil.
 
 ```bash
 dev-env project ~/Developer/Projects/meu-app
-dev-env project ~/Developer/Projects/meu-app --profile swift
+dev-env project ~/Developer/Projects/meu-app --profile <nome>
 dev-env project ~/Developer/Projects/meu-app --dry-run    # só mostra
 ```
 
@@ -239,10 +234,10 @@ Smoke tests focados: as ferramentas achariam a config?
 
 ```bash
 dev-env validate ~/Developer/Projects/meu-app
-dev-env validate ~/Developer/Projects/meu-app --profile swift
+dev-env validate ~/Developer/Projects/meu-app --profile <nome>
 ```
 
-Checa: todos os links resolvem, Claude acha `.claude`, Cursor acha `.cursor`, MCP `.mcp.json` é JSON válido. Sai com código ≠ 0 se algo falhar.
+Checa: todos os links resolvem, Claude acha `.claude`, Cursor acha `.cursor` e, quando um perfil linka `.mcp.json`, que ele é JSON válido. Sai com código ≠ 0 se algo falhar.
 
 ### Auditar (`doctor`)
 
@@ -280,24 +275,15 @@ profiles:
         target: .claude
       - source: ai/shared/.cursor
         target: .cursor
-
-  swift:
-    extends: default            # herda os links do default
-    profileVersion: 1
-    links:
-      - source: ai/shared/mcp/swift.json
-        target: .mcp.json
-        required: false
 ```
 
 - `source` é relativo à raiz do `dev-env`; `target` é relativo à raiz do projeto.
 - `required`/`conflict` têm padrão em `defaults` e podem ser sobrescritos por link.
 - Regras do formato: indentação de 2 espaços, sem tabs, sem arrays inline, sem âncoras. Quebrou a regra → o parser falha alto (não adivinha).
 
-### Perfis (`default`, `swift`)
+### Perfis
 
 - **`default`** — o conjunto compartilhado por todo projeto: o `AGENTS.md` na raiz (convenção lida por diversos agentes) mais os adapters `.claude` e `.cursor`, que apenas apontam para ele.
-- **`swift`** — `extends: default` e acrescenta o `.mcp.json` do perfil Swift.
 
 Novo perfil = novas linhas no manifesto (com `extends` quando fizer sentido). O perfil usado por cada projeto fica gravado no registro, então `doctor --all` aplica o perfil certo automaticamente.
 
@@ -368,7 +354,7 @@ jean-dev-environment/            (= ~/Developer/dev-env)
 │   ├── .claude/CLAUDE.md        # adapter do Claude Code
 │   ├── .cursor/rules/core.mdc   # adapter do Cursor
 │   ├── .agents  _bmad           # placeholders, fora do perfil default
-│   ├── mcp/                     # perfis de MCP (swift.json ainda ausente)
+│   ├── mcp/                     # configurações de MCP (vazio)
 │   ├── prompts  snippets  templates
 │   └── knowledge  docs          # knowledge/engineering-learnings.md
 ├── bootstrap/                   # implementação do CLI (comandos + libs)
