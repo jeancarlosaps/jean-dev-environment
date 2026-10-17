@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1600" height="720" viewBox="0 0 1600 720" role="img" aria-labelledby="title desc">
   <title id="title">dev-env — Configure uma vez. Todo projeto herda.</title>
-  <desc id="desc">Painel de controle do Jean Dev Environment. Um núcleo central, ~/Developer/dev-env, conectado aos quatro módulos reais do repositório: manifest/links.yaml, ai/shared/AGENTS.md, git/hooks e o CLI bin/dev-env. Do núcleo sai uma ligação para um projeto, que recebe os symlinks AGENTS.md, .claude e .cursor. Embaixo, o que o init configura uma vez por máquina: core.hooksPath, ignore global e PATH. A animação roda uma vez em cerca de três segundos e é desativada quando o sistema pede movimento reduzido; hero-still.svg é o quadro final.</desc>
+  <desc id="desc">Painel de controle do Jean Dev Environment. Um núcleo central, ~/Developer/dev-env, conectado aos quatro módulos reais do repositório: manifest/links.yaml, ai/shared/AGENTS.md, git/hooks e o CLI bin/dev-env. Do núcleo sai uma ligação para um projeto, que recebe os symlinks AGENTS.md, .claude e .cursor. Embaixo, o que o init configura uma vez por máquina: core.hooksPath, ignore global e PATH. Todos os elementos aparecem desde o primeiro quadro; a animação apenas assenta e acende as ligações, uma vez, em menos de três segundos, e não roda quando o sistema pede movimento reduzido. hero-still.svg é o quadro final.</desc>
   <defs>
     <pattern id="dots" width="32" height="32" patternUnits="userSpaceOnUse"><circle cx="2" cy="2" r="1" fill="#ECEFF4" opacity=".06"/></pattern>
     <radialGradient id="glow" cx=".5" cy=".5" r=".5">
@@ -23,7 +23,7 @@
     <path d="M80 98h1440" stroke="#2A2F38"/>
 
     <!-- copy -->
-    <g class="m-copy">
+    <g>
       <text x="80" y="190" fill="#7FA2F2" font-family="'SF Mono', SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="15" letter-spacing="2.4" font-weight="700">UMA FONTE DE VERDADE PARA TODOS OS PROJETOS</text>
       <path d="M80 236h70l24 44-24 44H80z" fill="#7FA2F2"/>
       <text x="104" y="298" fill="#121418" font-family="'SF Mono', SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="48" font-weight="700">~</text>
