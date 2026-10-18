@@ -448,12 +448,11 @@ explícita e causa comprovada.
 - Procurar `.github/pull_request_template.md` (e variantes em
   `.github/PULL_REQUEST_TEMPLATE/`).
 - Usar o template se existir.
-- Se não existir, usar o fallback genérico:
-  - **Overview**
-  - **Changes**
-  - **Evidence**
-  - **Validation**
-  - **Reviewer Notes**
+- Se não existir, usar a estrutura padrão, sem seções vazias:
+  - **O que foi feito**: resumo das principais alterações.
+  - **Validação**: testes, build, lint e CI, quando aplicáveis.
+  - **Observações**: só quando houver decisão, trade-off ou
+    limitação relevante.
 
 Título: seguir o padrão real do projeto, verificado no histórico de PRs.
 Não impor prefixo de ticket como padrão universal.
@@ -463,8 +462,21 @@ ChatGPT, OpenAI, Anthropic, Copilot, Gemini, IA, AI, "Generated",
 "Assisted" ou "Powered by" — a mesma proibição vale para changelogs,
 documentação e release notes.
 
-O PR descreve: objetivo, mudanças, decisões técnicas relevantes,
-testes e validações, evidências de CI quando existirem e trade-offs.
+### Escrita
+
+Escrever como um desenvolvedor sênior explicando a mudança para
+outros desenvolvedores: português brasileiro quando o projeto não
+definir outro idioma, frases simples e diretas, tom natural, sem
+linguagem robótica ou corporativa.
+
+- Título curto e descritivo.
+- Curto por padrão: mudança simples cabe em 5 a 10 linhas; mudança
+  complexa detalha só o necessário.
+- Cobrir o que importa (objetivo, mudanças, decisões técnicas,
+  testes, evidências de CI e trade-offs) sem repetir informação.
+- Não narrar o processo de desenvolvimento.
+- Não listar todos os arquivos modificados.
+- Preferir bullets a tabelas quando bastarem.
 
 Não pertence a descrições, comentários nem commits: problemas
 particulares da máquina (espaço em disco, limpeza de caches,
