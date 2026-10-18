@@ -268,6 +268,10 @@ completa** quando a mudança tocar infraestrutura ou componente
 compartilhado. Nenhuma entrega está pronta com build, lint ou testes
 vermelhos.
 
+Antes de builds ou testes iOS, consultar as regras de armazenamento em
+`ai/shared/knowledge/engineering-learnings.md` ("Xcode — controle de
+artefatos de build e simuladores de teste").
+
 ## Code review técnico
 
 Antes de considerar a entrega pronta, revisar — quando aplicável ao

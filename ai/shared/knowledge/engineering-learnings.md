@@ -1830,3 +1830,74 @@ CI: GitHub Actions `macos-26` com o mesmo Xcode e a mesma versão do CocoaPods. 
 - Investigação da falha na CI e correção: <https://github.com/jeancarlosaps/marketwatch-ios/pull/2>
 - <https://blog.cocoapods.org/CocoaPods-Specs-Repo/>
 - <https://github.com/ReactiveX/RxSwift/releases/tag/6.10.0>
+
+---
+
+# Xcode — controle de artefatos de build e simuladores de teste
+
+## Confidence
+
+🟡 **Validado em laboratório / POC**
+
+- Incidente real de falta de espaço durante builds e testes iOS; medições feitas antes e depois de cada limpeza.
+- Regras ainda sem aplicação prolongada.
+
+## Contexto
+
+Agentes executando builds e testes iOS repetidamente no macOS (Xcode 26.5, simulador iOS 26.5), em máquina com pouco espaço livre. O espaço livre caiu de mais de 15 GiB para cerca de 1,8 GiB, e uma rodada de testes falhou por falta de disco.
+
+## Investigação
+
+| Observação | Evidência |
+|---|---|
+| Diretórios temporários de build e testes no `/private/tmp` | 37 diretórios, cerca de 19,6 GiB, 36 criados no mesmo dia; a remoção recuperou cerca de 20 GiB livres |
+| Clones de testes paralelos em `~/Library/Developer/XCTestDevices` | 7 clones de 4,6 GiB cada pelo `du` (32 GiB); removidos com `xcrun simctl --set ~/Library/Developer/XCTestDevices delete all`, o espaço livre **não mudou** |
+| Simuladores de um runtime já removido | 12 dispositivos `unavailable`; `xcrun simctl delete unavailable` reduziu o `CoreSimulator` de 12 para 8,4 GiB pelo `du`, sem ganho mensurável no `df` |
+| Falha de testes com pouco disco | `Failed to clone device ... stuck in creation state` com cerca de 1,8 GiB livres; a mesma suíte passou em série (`-parallel-testing-enabled NO`) |
+
+## Causa raiz
+
+- Cada execução criava um DerivedData ou resultado novo em diretório temporário, sem reaproveitamento nem descarte ao final da tarefa.
+- Testes paralelos clonam o simulador; com pouco espaço, a clonagem falha antes dos testes rodarem.
+- **Fato:** clones de simulador são clones APFS (cópia sob demanda). O `du` soma o tamanho lógico de cada clone, mas os blocos físicos são compartilhados; remover clones quase não libera espaço real.
+
+## Hipóteses descartadas
+
+- **Os clones de `XCTestDevices` eram o principal consumo:** descartado; a remoção de 32 GiB lógicos não alterou o espaço livre.
+- **A falha de testes vinha do código:** descartado; a suíte passou sem paralelismo no mesmo commit.
+
+## Solução adotada
+
+- Remoção dos diretórios temporários criados pelas próprias tarefas, após confirmar que não estavam em uso.
+- Remoção de clones e simuladores indisponíveis pelo `simctl`, preservando runtimes e simuladores em uso.
+- Rodadas locais em série no simulador existente, com a CI como validação principal.
+
+## Lacunas
+
+- Não medido quanto do espaço físico dos simuladores é compartilhado com o runtime.
+- A liberação de blocos no APFS pode ser assíncrona; medições foram feitas segundos após cada remoção.
+
+## Lições aprendidas
+
+1. Verificar o espaço livre (`df`) antes de build ou testes; mirar uma margem operacional de 20 GiB sempre que possível.
+2. Medir o efeito de uma limpeza com `df` antes e depois; o `du` superestima diretórios com clones APFS.
+3. Reutilizar um DerivedData por projeto ou tarefa, em vez de criar um diretório novo a cada execução.
+4. Evitar testes paralelos e clonagem de simuladores sem necessidade real; preferir o simulador já disponível.
+5. Não criar nem baixar runtimes sem necessidade.
+6. Não repetir testes já aprovados quando não houve mudança relevante; reutilizar resultados e priorizar a CI quando apropriado.
+7. Artefatos temporários têm ciclo de vida definido: criação, reutilização e descarte ao final da tarefa que os criou, desde que não estejam em uso.
+8. Preservar screenshots, logs e resultados necessários como evidência.
+9. Nunca usar `rm -rf` genérico em DerivedData, `CoreSimulator` ou diretórios de desenvolvimento; preferir `xcrun simctl` (por exemplo `delete unavailable` ou `--set <device set> delete`).
+10. Não apagar preferências, sessões, históricos ou projetos do usuário.
+11. Em falha ambiental (por exemplo, clonagem de simulador), diagnosticar a causa antes de repetir builds.
+12. Não criar automações de limpeza sem necessidade comprovada.
+
+## Recomendações futuras
+
+- Ao planejar uma tarefa com builds iOS, incluir a verificação de espaço e o destino dos artefatos no próprio plano.
+- Reavaliar estas regras se o Xcode mudar a forma de clonar simuladores para testes paralelos.
+
+## Referências
+
+- `xcrun simctl help delete` (device sets e `unavailable`)
+- `xcodebuild -help` (`-parallel-testing-enabled`, `-derivedDataPath`)
