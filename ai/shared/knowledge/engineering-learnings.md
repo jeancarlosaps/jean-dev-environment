@@ -1741,3 +1741,92 @@ Links globais fora do manifesto: sem declaração, não há instalação reprodu
 - `manifest/links.yaml` (`machine:`), `bootstrap/commands/init.sh` (`_init_machine_links`), `bootstrap/commands/doctor.sh` (`_doctor_machine`)
 - <https://code.claude.com/docs/en/memory>
 - <https://cursor.com/docs/context/rules>
+
+---
+
+# CocoaPods com Xcode 26: RxSwift congelado na 6.9.0 e script sandboxing
+
+## Confidence
+
+🟡 **Validado em laboratório / POC**
+
+- Projeto novo compilado, testado e executado no simulador; CI no GitHub Actions verde após a correção de sandboxing.
+- Correção integrada na branch de integração do projeto; ainda sem uso prolongado.
+
+## Contexto
+
+Projeto UIKit novo com CocoaPods obrigatório (Alamofire, RxSwift, RxCocoa, Kingfisher, SwiftLint).
+Xcode 26.5 (17F42), Swift 6.3.2 em Swift 5 language mode, CocoaPods 1.16.2 (xcodeproj 1.27.0),
+deployment target iOS 16.0, simulador iOS 26.5, pods como frameworks dinâmicos (`use_frameworks!`).
+CI: GitHub Actions `macos-26` com o mesmo Xcode e a mesma versão do CocoaPods. Verificado em 2026-10-17 e 2026-10-18.
+
+## Investigação
+
+| Experimento | Resultado |
+|---|---|
+| Índice do CDN do CocoaPods para RxSwift/RxCocoa/RxRelay | Última versão publicada: 6.9.0 (fev/2025); 6.10.x existe só via SPM |
+| Notas do RxSwift 6.10.0 | Suporte a CocoaPods oficialmente descontinuado |
+| Blog do CocoaPods | Trunk deixa de aceitar novas versões em 2026-12-02; builds existentes continuam |
+| `pod install` em projeto com pastas sincronizadas (`objectVersion = 77`) | Integração concluída sem converter grupos |
+| `pod install` com repositório CDN local antigo | `None of your spec sources contain a spec satisfying ...`; resolvido com `pod repo update trunk` |
+| Build sem ajustes | 8 avisos de deployment target 9.0/10.0 (mínimo do Xcode 26 é 12.0) e 4 avisos de `Sendable` do Alamofire derivados do mesmo alvo baixo |
+| `post_install` com `IPHONEOS_DEPLOYMENT_TARGET = 16.0` nos pods | Os 12 avisos somem; surge 1 aviso de API depreciada do RxCocoa, esperado com alvo maior |
+| RxSwift 6.9.0 com Swift 6.3 | Compila; 4 avisos `weak variable ... never mutated` (corrigidos só na 6.10) |
+| Build local com `ENABLE_USER_SCRIPT_SANDBOXING = YES` e DerivedData em `/tmp` | Fases `[CP]` concluídas; app executa no simulador |
+| Mesmo commit na CI, DerivedData dentro do workspace | `[CP] Embed Pods Frameworks` falha: `Sandbox: rsync deny(1) file-write-create .../MarketWatch.app/Frameworks/Alamofire.framework/Alamofire.bundle`, `_CodeSignature` e `.Alamofire.XXXXXX` |
+| Saídas que a fase declara (`Pods-<target>-frameworks-${CONFIGURATION}-output-files.xcfilelist`) | Cada `*.framework` está declarado; o sandbox libera o caminho declarado, não o conteúdo criado dentro dele |
+| Tentativa de resolver declarando entradas e saídas | Insuficiente: o `rsync` grava em temporários de nome aleatório (`mkstemp`) e a fase é regenerada a cada `pod install` |
+| `ENABLE_USER_SCRIPT_SANDBOXING = NO` só no target do app (Debug e Release) | CI verde: `pod install --deployment`, SwiftLint estrito, build e Swift Testing |
+| Mesma configuração com fase do SwiftLint (binário do pod) | `Sandbox: swiftlint deny file-read-data` no binário e no `.swiftlint.yml` |
+| Fase do SwiftLint com binário, config e pastas de código em `inputPaths`, mais `--no-cache` | Lint executa dentro do sandbox, lê subpastas e detecta violação inserida de propósito |
+
+## Causa raiz
+
+- RxSwift via CocoaPods parou na 6.9.0 por decisão do projeto, alinhada ao trunk somente leitura.
+- Podspecs antigos declaram deployment targets abaixo do mínimo aceito pelo Xcode 26.
+- O script sandboxing só permite à fase ler o que ela declara como entrada; o SwiftLint lê a árvore de código e o próprio config.
+- Na escrita, o sandbox libera apenas os caminhos declarados como saída. A fase de embed gerada pelo CocoaPods copia diretórios inteiros com `rsync`, criando conteúdo e temporários que não podem ser declarados.
+- **Inferência:** o build local passou porque o sandbox permite escrita em `/tmp`; mesmo projeto e mesma configuração, resultado diferente apenas pelo local do DerivedData.
+
+## Hipóteses descartadas
+
+- **Pastas sincronizadas incompatíveis com CocoaPods:** descartado no `pod install` real.
+- **Desligar o sandboxing é necessário para o SwiftLint:** descartado; declarar entradas basta para a fase do SwiftLint.
+- **Declarar entradas e saídas resolve a fase de embed do CocoaPods:** descartado na CI; os temporários do `rsync` não são declaráveis e a fase é gerada pelo CocoaPods.
+
+## Solução adotada
+
+- Fixar RxSwift/RxCocoa em `6.9.0` e travar tudo no `Podfile.lock`.
+- `post_install` alinhando o deployment target dos pods ao do app.
+- `ENABLE_USER_SCRIPT_SANDBOXING = NO` apenas nas configurações Debug e Release do target do app, que contém a fase de embed. Projeto e target de testes mantêm `YES`; scripts gerados e dependências inalterados.
+- Fase do SwiftLint com `inputPaths` (binário, config, pastas de código) e `--no-cache`; com o sandboxing desligado no target do app, essas entradas deixaram de ser obrigatórias, mas continuam corretas.
+- **Trade-off de segurança:** as fases de script do target do app passam a rodar sem o sandbox do Xcode e podem ler e escrever fora das entradas e saídas declaradas. A mitigação é restringir a mudança a um target e revisar fases de script novas ou alteradas.
+- Avisos restantes de terceiros documentados, não suprimidos.
+
+## Lacunas
+
+- Execução em runtime iOS 16 não validada (apenas compilação).
+- Comportamento após 2026-12-02 não observado.
+- Diretórios em `inputPaths` também entram na análise de dependências do Xcode; impacto em builds incrementais grandes não medido.
+- Validado apenas para a combinação observada (CocoaPods 1.16.2, frameworks dinâmicos, Xcode 26.5). Não verificado com linkagem estática nem com versões futuras do CocoaPods.
+- A permissão de escrita em `/tmp` dentro do sandbox não foi confirmada no perfil do sandbox; é inferência pela diferença de resultado.
+
+## Lições aprendidas
+
+- Antes de adotar uma dependência via CocoaPods em 2026, confirmar no índice do CDN qual é a última versão realmente publicada; o GitHub pode estar à frente.
+- Aviso de alvo abaixo do mínimo nos pods se resolve no `post_install`, sem tocar em podspecs.
+- Diante de bloqueio de sandbox em fase de script, declarar entradas e saídas primeiro; isso não cobre scripts de terceiros que copiam árvores de diretórios com arquivos temporários, como o embed do CocoaPods.
+- Build local com DerivedData em `/tmp` pode esconder falhas de sandbox; validar com o DerivedData padrão ou na CI. `/tmp` não é solução.
+- Desligar o sandboxing é decisão por target, com evidência da falha, e não regra geral para projetos com CocoaPods.
+
+## Recomendações futuras
+
+- Em projeto novo sem exigência de CocoaPods, preferir SPM.
+- Reavaliar a pilha CocoaPods após a mudança do trunk e a cada nova versão do Xcode.
+
+## Referências
+
+- Projeto: `jeancarlosaps/marketwatch-ios` (`Podfile`, `Podfile.lock`, fase SwiftLint no `project.pbxproj`, ADR-001)
+- Investigação da falha na CI e correção: <https://github.com/jeancarlosaps/marketwatch-ios/pull/2>
+- <https://blog.cocoapods.org/CocoaPods-Specs-Repo/>
+- <https://github.com/ReactiveX/RxSwift/releases/tag/6.10.0>
