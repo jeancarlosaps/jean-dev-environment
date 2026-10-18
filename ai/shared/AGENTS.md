@@ -59,6 +59,9 @@ descrições, comentários automáticos.
   comentam e commitam com a própria identidade — proibido.
 - Respeitar a política de assinatura já existente no repositório. Não
   ligar nem desligar `commit.gpgsign` por conta própria.
+- Com assinatura configurada na máquina (ex.: SSH commit signing), todo
+  commit sai assinado: nunca usar `--no-gpg-sign` e nunca reescrever
+  histórico publicado só para assinar retroativamente.
 
 ## Artefatos de IA — nunca versionar
 
@@ -459,6 +462,17 @@ Conteúdo exclusivamente técnico. Nunca mencionar Claude, Cursor,
 ChatGPT, OpenAI, Anthropic, Copilot, Gemini, IA, AI, "Generated",
 "Assisted" ou "Powered by" — a mesma proibição vale para changelogs,
 documentação e release notes.
+
+O PR descreve: objetivo, mudanças, decisões técnicas relevantes,
+testes e validações, evidências de CI quando existirem e trade-offs.
+
+Não pertence a descrições, comentários nem commits: problemas
+particulares da máquina (espaço em disco, limpeza de caches,
+ferramentas locais ausentes), caminhos absolutos do computador,
+conversas ou prompts de agentes e narrativa de como a tarefa foi
+executada. Exceção: detalhe local necessário para reproduzir um
+problema técnico do projeto, descrito de forma genérica e sem caminhos
+pessoais.
 
 ### Evidências
 
