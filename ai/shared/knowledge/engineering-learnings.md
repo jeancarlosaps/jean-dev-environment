@@ -1901,3 +1901,77 @@ Agentes executando builds e testes iOS repetidamente no macOS (Xcode 26.5, simul
 
 - `xcrun simctl help delete` (device sets e `unavailable`)
 - `xcodebuild -help` (`-parallel-testing-enabled`, `-derivedDataPath`)
+
+---
+
+# Idempotência de criação: a identidade não expira, só o cache
+
+## Confidence
+
+🟠 **Hipótese forte**
+
+- Architecture review de uma API Fastify + `node:sqlite` com cliente Flutter offline-aware, conferido contra o código real.
+- Nada implementado ainda; sem validação em produção.
+
+## Contexto
+
+`POST` de criação com `Idempotency-Key` (UUID gerado no cliente). A chave, o hash do body e o snapshot da resposta eram gravados na mesma transação do pedido e apagados após 24 horas por uma purga global dentro do próprio `POST`. O cliente guardava a intenção localmente e deixava de reenviar perto do fim da janela, usando o próprio relógio.
+
+## Investigação
+
+| Observação | Evidência |
+|---|---|
+| A mesma chave cria um segundo pedido depois da retenção | Teste existente afirmava esse comportamento como contrato |
+| A tabela de pedidos não guarda a chave | Schema; chave purgada é irrecuperável, "nunca recebida" e "já apagada" ficam indistinguíveis |
+| O lookup da chave vem antes da validação de catálogo | Replay com produto indisponível devolve o snapshot |
+| A validação de schema do framework roda antes do handler | Mudança incompatível no body responde 400 até para chave já commitada |
+| O cliente apaga a intenção em qualquer 4xx diferente de 409 | Classificação de erro; o próximo envio gera chave nova |
+| Driver síncrono, uma conexão, um processo | Transações nunca se intercalam; teste de concorrência in-process só prova serialização |
+
+Proposta revisada: recibo durável em tabela separada, cache de 24 horas, `GET` de consulta e token de capacidade. Problemas comprovados: o `GET` sem body não consegue calcular conflito de payload; a purga dentro do `GET` transforma leitura em escrita; um 404 de consulta só significa "não commitado até agora"; não havia plano de rollback, e o código anterior volta a apagar identidades; o token não protegia nada porque a listagem de pedidos já era pública, e o novo 401 caía na classe de erro que apaga a intenção no cliente.
+
+## Causa raiz
+
+A janela de retenção era aplicada à identidade da intenção, não só ao snapshot da resposta. Expirar a identidade transforma "repetição" em "intenção nova" e permite outro pedido.
+
+## Hipóteses descartadas
+
+- **Consulta `GET` resolve a perda de resposta:** descartado; repetir o mesmo `POST` idempotente já recupera o resultado, e um 404 de consulta é instável (requisição ainda em leitura do body, chaves purgadas antes do deploy).
+- **Folga no relógio do cliente equivale à garantia do servidor:** descartado; o relógio do aparelho não é o `created_at` gravado pelo servidor.
+- **Token de capacidade é necessário para a consulta:** descartado enquanto a listagem de pedidos for pública.
+
+## Solução adotada
+
+Recomendação do review (não implementada):
+
+- Não apagar a linha de idempotência; o snapshot fica junto e o replay é determinístico para sempre.
+- Recuperação = repetir o mesmo `POST` com a mesma chave e o mesmo body; sem `GET` e sem token no MVP.
+- Rollback floor: nenhuma versão implantada pode voltar a apagar identidades. Rollback abaixo desse piso só com cópia do banco e reinserção das linhas (`INSERT OR IGNORE`), que são imutáveis.
+- Abandono local só para estados em que o servidor já não pode criar pelo mesmo identificador (conflito, estado inválido). Abandono de estado desconhecido exige cerca no servidor (`void` que grava tombstone) ou é risco aceito explicitamente.
+
+## Lacunas
+
+- Topologia de deploy (processo único ou réplicas no mesmo volume) e comportamento de proxies que geram 4xx depois do commit.
+- Procedimento de backup e restore: restaurar um backup antigo pode recriar um pedido já atendido.
+
+## Lições aprendidas
+
+1. Separar identidade de cache: a identidade da intenção nunca expira; só o snapshot de resposta pode expirar, e de preferência nem ele.
+2. "Ausência de linha" só significa "não commitado" se nenhum código apagar identidades; documentar o epoch a partir do qual isso vale.
+3. Chave já commitada nunca pode responder 4xx diferente de conflito; verificar a ordem lookup → validação e manter o schema do `POST` evolutivo e compatível.
+4. Antes de criar código de erro novo no caminho idempotente, conferir como o cliente o classifica: um 4xx genérico pode apagar a intenção e gerar outra chave.
+5. Consulta de estado não substitui retry idempotente; um 404 de consulta é uma foto, não uma decisão.
+6. Mudança que deixa de apagar estado precisa de rollback floor: o código anterior apaga o que a versão nova passou a preservar.
+7. Token de capacidade só tem valor se o mesmo dado não estiver exposto por outro endpoint.
+8. Em driver SQLite síncrono, teste de concorrência real precisa de dois processos no mesmo arquivo.
+
+## Recomendações futuras
+
+- Ao revisar idempotência, mapear a matriz completa (chave ausente, presente com mesmo hash, hash divergente, estado inconsistente) e a classificação de cada resposta no cliente.
+- Reavaliar o token de capacidade quando houver autenticação de cliente e a listagem deixar de ser pública.
+
+## Referências
+
+- RFC 9110 (semântica de métodos e idempotência)
+- Draft IETF `httpapi-idempotency-key-header`
+- SQLite: `BEGIN IMMEDIATE`, `PRAGMA synchronous`, `PRAGMA foreign_keys`
