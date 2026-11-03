@@ -437,6 +437,14 @@ O `init` não substitui o arquivo (`conflict: skip`) e o `doctor` avisa. Para ca
 
 Leia a mensagem do hook: ela diz o que bloqueou (menção a IA, coautoria, artefato staged, identidade). Corrija a mensagem ou o staging e tente de novo. Nunca contorne com `--no-verify`.
 
+### Push interrompido ao consultar o remoto
+
+O `pre-push` lê o destino com `git ls-remote` antes de autorizar o push. Essa consulta é uma segunda conexão, no mesmo URL que o Git vai usar. O comando SSH é o que o Git usaria, nesta ordem: `GIT_SSH_COMMAND`, `core.sshCommand`, `GIT_SSH`. A consulta não pergunta senha no terminal. Para o OpenSSH, ela acrescenta `BatchMode`. Um helper de credencial já configurado continua valendo no HTTPS. Um programa apontado por `GIT_SSH` cujo nome não termina em `ssh` é executado como o Git o executaria, sem `BatchMode`; se ele esperar uma senha, a consulta espera ou falha.
+
+Quando a consulta falha, o push para. A mensagem começa com `não foi possível ler as refs do remoto` e traz o erro do transporte, sem usuário nem senha da URL. Confira a URL, a chave, o agente e o wrapper. Se o remoto anuncia um commit que este clone não tem, o push também para: `git fetch` traz o objeto que falta.
+
+A consulta não vê uma ref removida no servidor entre ela e o update. Um hook local não fecha essa janela.
+
 ## 10 · Setup de máquina (zsh) — opcional
 
 O `scripts/mac-dev-setup.sh` continua disponível para preparar o shell (Powerlevel10k, autosuggestions, syntax highlight, fzf). É independente do `dev-env` e roda uma vez por máquina. Requer Homebrew.
