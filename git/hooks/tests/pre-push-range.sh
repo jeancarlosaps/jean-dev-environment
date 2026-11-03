@@ -204,6 +204,45 @@ git -C "$repo" update-ref -d refs/remotes/origin/tracked/main
 git -C "$repo" update-ref -d refs/remotes/origin/feature
 git -C "$repo" update-ref refs/remotes/origin/main "$B"
 
+# Curinga com sufixo: refs/heads/*-release -> refs/remotes/origin/*-tracked.
+git -C "$repo" config remote.origin.fetch '+refs/heads/*-release:refs/remotes/origin/*-tracked'
+git -C "$repo" update-ref refs/remotes/origin/feature-tracked "$D"
+run_pre_push "refs/heads/feature-release $D refs/heads/feature-release $C"
+assert_status "refspec com sufixo nao esconde commit novo" 1 "$pre_status"
+assert_contains "refspec com sufixo mostra a mencao" "mencao proibida"
+git -C "$repo" update-ref refs/remotes/origin/feature-tracked "$A"
+run_pre_push "refs/heads/feature-release $C refs/heads/feature-release $A"
+assert_status "refspec com sufixo preserva historico publicado" 0 "$pre_status"
+assert_lacks "refspec com sufixo nao lista o publicado" "historico publicado"
+
+# Curinga vazio: release* casa com release.
+git -C "$repo" config remote.origin.fetch '+refs/heads/release*:refs/remotes/origin/out*'
+git -C "$repo" update-ref refs/remotes/origin/out "$D"
+run_pre_push "refs/heads/release $D refs/heads/release $C"
+assert_status "refspec com curinga vazio nao esconde commit novo" 1 "$pre_status"
+assert_contains "curinga vazio mostra a mencao" "mencao proibida"
+git -C "$repo" config --unset remote.origin.fetch
+git -C "$repo" update-ref -d refs/remotes/origin/feature-tracked
+git -C "$repo" update-ref -d refs/remotes/origin/out
+
+# Push pelo endereço do remoto, não pelo nome.
+git -C "$repo" config remote.origin.url "file://$work/nowhere.git"
+git -C "$repo" update-ref refs/remotes/origin/feature "$D"
+set +e
+pre_err=$(printf '%s\n' "refs/heads/feature $D refs/heads/feature $C" | (cd "$repo" && "$PRE_PUSH" "file://$work/nowhere" "file://$work/nowhere") 2>&1)
+pre_status=$?
+set -e
+assert_status "push por URL nao esconde commit novo" 1 "$pre_status"
+assert_contains "push por URL mostra a mencao" "mencao proibida"
+set +e
+pre_err=$(printf '%s\n' "refs/heads/feature $C refs/heads/feature $A" | (cd "$repo" && "$PRE_PUSH" "file://$work/other" "file://$work/other") 2>&1)
+pre_status=$?
+set -e
+assert_status "URL sem remoto configurado falha fechado" 1 "$pre_status"
+assert_contains "URL desconhecida explica a falha" "remoto do push não identificado"
+git -C "$repo" config --unset remote.origin.url
+git -C "$repo" update-ref -d refs/remotes/origin/feature
+
 cd "$repo"
 clean="$work/clean-msg.txt"
 msg "$clean" "feat: mensagem nova sem trailer"

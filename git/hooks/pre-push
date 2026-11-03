@@ -26,6 +26,7 @@ input=$(cat)
 
 if ! ai_guard_maintenance && [ -n "$input" ]; then
   remote_name="${1:-}"
+  remote_url="${2:-}"
   bad=""
   bad_state=""
   while read -r local_ref local_sha remote_ref remote_sha; do
@@ -39,7 +40,7 @@ if ! ai_guard_maintenance && [ -n "$input" ]; then
   ${local_ref:-ref} -> ${remote_ref:-ref}: falha ao preparar a verificação"
       continue
     }
-    if ! range=$(ai_guard_push_commits "$remote_name" "$local_ref" "$local_sha" "$remote_ref" "$remote_sha" 2>"$range_err"); then
+    if ! range=$(ai_guard_push_commits "$remote_name" "$local_ref" "$local_sha" "$remote_ref" "$remote_sha" "$remote_url" 2>"$range_err"); then
       detail=$(cat "$range_err")
       rm -f "$range_err"
       [ -n "$detail" ] || detail="ref remota ausente ou estado inconsistente"
