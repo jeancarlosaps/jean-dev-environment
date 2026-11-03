@@ -149,18 +149,114 @@ ai_guard_artifacts_allowed() {
   [ "$(git config --bool ai-guard.allowartifacts 2>/dev/null)" = "true" ]
 }
 
+# ai_guard_star_count <text>
+ai_guard_star_count() {
+  local rest="$1" n=0
+  while true; do
+    case "$rest" in
+      *'*'*) n=$((n + 1)); rest="${rest#*\*}" ;;
+      *) break ;;
+    esac
+  done
+  printf '%s\n' "$n"
+}
+
+# ai_guard_refspec_dest <ref> <src> <dst>
+# Prints the local destination when <ref> matches the fetch source.
+# Returns 1 when this pattern does not apply. A single * matches across
+# slashes, as in a Git refspec.
+ai_guard_refspec_dest() {
+  local ref="$1" src="$2" dst="$3"
+  local prefix suffix rest dpre dsuf
+  case "$src" in
+    *'*'*)
+      prefix="${src%%\*}"
+      suffix="${src#*\*}"
+      case "$ref" in
+        "$prefix"*"$suffix") ;;
+        *) return 1 ;;
+      esac
+      rest="${ref#"$prefix"}"
+      if [ -n "$suffix" ]; then
+        rest="${rest%"$suffix"}"
+      fi
+      [ -n "$rest" ] || return 1
+      [ "$ref" = "${prefix}${rest}${suffix}" ] || return 1
+      dpre="${dst%%\*}"
+      dsuf="${dst#*\*}"
+      printf '%s\n' "${dpre}${rest}${dsuf}"
+      ;;
+    *)
+      [ "$ref" = "$src" ] || return 1
+      printf '%s\n' "$dst"
+      ;;
+  esac
+}
+
+# ai_guard_tracking_refs <remote_name> <remote_ref>
+# Prints the local tracking refs that correspond to this destination.
+# Uses remote.<name>.fetch when it exists. Without that config, only a
+# refs/heads/* push falls back to refs/remotes/<remote>/<branch>. A tag
+# never selects a branch-tracking ref just because the short names match.
+# Returns 1 when a configured refspec cannot be interpreted.
+ai_guard_tracking_refs() {
+  local remote_name="$1" remote_ref="$2"
+  local specs="" spec src dst dest src_stars dst_stars
+  if ! specs=$(git config --get-all "remote.${remote_name}.fetch" 2>/dev/null); then
+    specs=""
+  fi
+  if [ -z "$specs" ]; then
+    case "$remote_ref" in
+      refs/heads/*)
+        [ -n "$remote_name" ] || return 0
+        printf 'refs/remotes/%s/%s\n' "$remote_name" "${remote_ref#refs/heads/}"
+        ;;
+    esac
+    return 0
+  fi
+  while IFS= read -r spec; do
+    [ -n "$spec" ] || continue
+    case "$spec" in
+      ^*) continue ;;
+    esac
+    spec="${spec#+}"
+    case "$spec" in
+      *:*) ;;
+      *)
+        echo "estado inconsistente: refspec de fetch sem destino (${spec})" >&2
+        return 1
+        ;;
+    esac
+    src="${spec%%:*}"
+    dst="${spec#*:}"
+    [ -n "$dst" ] || continue
+    src_stars=$(ai_guard_star_count "$src")
+    dst_stars=$(ai_guard_star_count "$dst")
+    if [ "$src_stars" -gt 1 ] || [ "$dst_stars" -gt 1 ] || [ "$src_stars" -ne "$dst_stars" ]; then
+      echo "estado inconsistente: refspec de fetch com curinga inválido (${spec})" >&2
+      return 1
+    fi
+    dest=$(ai_guard_refspec_dest "$remote_ref" "$src" "$dst") || continue
+    [ -n "$dest" ] || continue
+    printf '%s\n' "$dest"
+  done <<EOF
+$specs
+EOF
+}
+
 # ai_guard_push_commits <remote_name> <local_ref> <local_sha> <remote_ref> <remote_sha>
 # Prints commits introduced by this ref update. A commit is included only
 # when it is reachable from local_sha and not reachable from the remote_sha
-# received on stdin, nor from any other remote-tracking ref. The destination
-# remote-tracking ref (and a symbolic HEAD that points at it) is not an
-# exclusion: stdin remote_sha is the remote state of that ref. A remote_sha
-# made only of zeros means the destination ref does not exist yet.
-# Does not look at branch names beyond the ref pair, and does not use HEAD~1.
-# Returns 1, with no SHAs on stdout, when the range cannot be determined.
+# received on stdin, nor from any other remote-tracking ref. The tracking
+# ref of this destination, resolved from the configured fetch refspec, is
+# not an exclusion: stdin remote_sha is the remote state of that ref. A
+# symbolic HEAD that points at that tracking ref is also not an exclusion.
+# A remote_sha made only of zeros means the destination ref does not exist
+# yet. Does not use HEAD~1. Returns 1, with no SHAs on stdout, when the
+# range cannot be determined.
 ai_guard_push_commits() {
   local remote_name="$1" local_ref="$2" local_sha="$3" remote_ref="$4" remote_sha="$5"
-  local suffix="" skip="" ref="" sha="" symref="" errfile="" outfile="" status=0
+  local ref="" sha="" symref="" errfile="" outfile="" skipfile="" status=0
   local -a exclude
 
   case "$remote_sha" in
@@ -168,24 +264,25 @@ ai_guard_push_commits() {
     *) remote_sha="" ;;
   esac
 
-  case "$remote_ref" in
-    refs/heads/*) suffix="${remote_ref#refs/heads/}" ;;
-    refs/tags/*) suffix="${remote_ref#refs/tags/}" ;;
-  esac
-  if [ -n "$remote_name" ] && [ -n "$suffix" ]; then
-    skip="refs/remotes/${remote_name}/${suffix}"
-  fi
-
   errfile=$(mktemp "${TMPDIR:-/tmp}/ai-guard-push-err.XXXXXX") || return 1
   outfile=$(mktemp "${TMPDIR:-/tmp}/ai-guard-push-out.XXXXXX") || {
     rm -f "$errfile"
     return 1
   }
+  skipfile=$(mktemp "${TMPDIR:-/tmp}/ai-guard-push-skip.XXXXXX") || {
+    rm -f "$errfile" "$outfile"
+    return 1
+  }
+
+  if ! ai_guard_tracking_refs "$remote_name" "$remote_ref" >"$skipfile"; then
+    rm -f "$errfile" "$outfile" "$skipfile"
+    return 1
+  fi
 
   if ! git for-each-ref --format='%(refname) %(objectname) %(symref)' refs/remotes >"$outfile" 2>"$errfile"; then
     echo "estado inconsistente: não foi possível ler as refs remotas conhecidas de ${local_ref}" >&2
     cat "$errfile" >&2
-    rm -f "$errfile" "$outfile"
+    rm -f "$errfile" "$outfile" "$skipfile"
     return 1
   fi
 
@@ -194,8 +291,12 @@ ai_guard_push_commits() {
   while read -r ref sha symref; do
     [ -n "$ref" ] || continue
     [ -n "$sha" ] || continue
-    [ -n "$skip" ] && [ "$ref" = "$skip" ] && continue
-    [ -n "$skip" ] && [ "$symref" = "$skip" ] && continue
+    if [ -s "$skipfile" ] && grep -Fxq -- "$ref" "$skipfile"; then
+      continue
+    fi
+    if [ -n "$symref" ] && [ -s "$skipfile" ] && grep -Fxq -- "$symref" "$skipfile"; then
+      continue
+    fi
     exclude+=("$sha")
   done <"$outfile"
 
@@ -212,12 +313,12 @@ ai_guard_push_commits() {
     else
       cat "$errfile" >&2
     fi
-    rm -f "$errfile" "$outfile"
+    rm -f "$errfile" "$outfile" "$skipfile"
     return 1
   fi
 
   cat "$outfile"
-  rm -f "$errfile" "$outfile"
+  rm -f "$errfile" "$outfile" "$skipfile"
   return 0
 }
 

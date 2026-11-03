@@ -167,6 +167,43 @@ assert_contains "motivo de coautoria" "coautoria"
 assert_lacks "coautoria humana nao vira mencao a IA" "menção a IA"
 assert_lacks "nao aponta o trailer publicado" "historico publicado"
 
+# Tag com o mesmo nome de uma branch não dispensa o rastreio dessa branch.
+git -C "$repo" update-ref refs/remotes/origin/main "$B"
+git -C "$repo" symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/main
+git -C "$repo" update-ref refs/tags/main "$B"
+run_pre_push "refs/tags/main $B refs/tags/main $ZERO"
+assert_status "tag com o mesmo nome da branch publicada" 0 "$pre_status"
+assert_lacks "tag nao reabre o historico publicado" "historico publicado"
+run_pre_push "refs/tags/alerta $D refs/tags/alerta $ZERO"
+assert_status "tag nova com commit proibido" 1 "$pre_status"
+assert_contains "tag nova aponta a mencao proibida" "mencao proibida"
+assert_lacks "tag nova nao lista o historico publicado" "historico publicado"
+
+# Refspec de fetch fora do mapeamento convencional.
+git -C "$repo" config remote.origin.fetch '+refs/heads/*:refs/remotes/origin/tracked/*'
+git -C "$repo" update-ref refs/remotes/origin/tracked/feature "$D"
+git -C "$repo" update-ref refs/remotes/origin/feature "$C"
+run_pre_push "refs/heads/feature $D refs/heads/feature $C"
+assert_status "refspec personalizado nao esconde commit novo" 1 "$pre_status"
+assert_contains "refspec personalizado mostra a mencao" "mencao proibida"
+git -C "$repo" update-ref refs/remotes/origin/tracked/main "$B"
+git -C "$repo" symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/tracked/main
+git -C "$repo" update-ref -d refs/remotes/origin/main
+git -C "$repo" update-ref -d refs/remotes/origin/feature
+git -C "$repo" update-ref refs/remotes/origin/tracked/feature "$A"
+run_pre_push "refs/heads/feature $C refs/heads/feature $A"
+assert_status "refspec personalizado preserva historico publicado" 0 "$pre_status"
+assert_lacks "refspec personalizado nao lista o publicado" "historico publicado"
+git -C "$repo" config remote.origin.fetch 'refs/heads/*'
+run_pre_push "refs/heads/feature $C refs/heads/feature $A"
+assert_status "refspec sem destino falha fechado" 1 "$pre_status"
+assert_contains "refspec invalido explica a falha" "estado inconsistente"
+git -C "$repo" config --unset remote.origin.fetch
+git -C "$repo" update-ref -d refs/remotes/origin/tracked/feature
+git -C "$repo" update-ref -d refs/remotes/origin/tracked/main
+git -C "$repo" update-ref -d refs/remotes/origin/feature
+git -C "$repo" update-ref refs/remotes/origin/main "$B"
+
 cd "$repo"
 clean="$work/clean-msg.txt"
 msg "$clean" "feat: mensagem nova sem trailer"
