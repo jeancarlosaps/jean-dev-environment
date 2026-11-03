@@ -243,6 +243,91 @@ assert_contains "URL desconhecida explica a falha" "remoto do push não identifi
 git -C "$repo" config --unset remote.origin.url
 git -C "$repo" update-ref -d refs/remotes/origin/feature
 
+# Segunda pushurl do mesmo remoto.
+git -C "$repo" config remote.origin.url "file://$work/fetch-only"
+git -C "$repo" config --add remote.origin.pushurl "file://$work/push-a"
+git -C "$repo" config --add remote.origin.pushurl "file://$work/push-b.git"
+git -C "$repo" update-ref refs/remotes/origin/main "$B"
+set +e
+pre_err=$(printf '%s\n' "refs/heads/main $C refs/heads/main $B" | (cd "$repo" && "$PRE_PUSH" "file://$work/push-b" "file://$work/push-b") 2>&1)
+pre_status=$?
+set -e
+assert_status "segunda pushurl aceita commit valido" 0 "$pre_status"
+git -C "$repo" update-ref refs/remotes/origin/feature "$D"
+set +e
+pre_err=$(printf '%s\n' "refs/heads/feature $D refs/heads/feature $C" | (cd "$repo" && "$PRE_PUSH" "file://$work/push-b" "file://$work/push-b") 2>&1)
+pre_status=$?
+set -e
+assert_status "segunda pushurl nao esconde commit novo" 1 "$pre_status"
+assert_contains "segunda pushurl mostra a mencao" "mencao proibida"
+git -C "$repo" config --unset-all remote.origin.pushurl
+git -C "$repo" config --unset remote.origin.url
+git -C "$repo" update-ref -d refs/remotes/origin/feature
+
+# Alias com a mesma URL.
+git -C "$repo" config remote.origin.url "file://$work/repo.git"
+git -C "$repo" config remote.backup.url "file://$work/repo"
+git -C "$repo" update-ref refs/remotes/origin/feature "$D"
+git -C "$repo" update-ref refs/remotes/backup/feature "$D"
+run_pre_push "refs/heads/feature $D refs/heads/feature $C"
+assert_status "alias nao esconde commit novo" 1 "$pre_status"
+assert_contains "alias mostra a mencao" "mencao proibida"
+git -C "$repo" config --unset remote.backup.url
+git -C "$repo" config --unset remote.origin.url
+git -C "$repo" update-ref -d refs/remotes/origin/feature
+git -C "$repo" update-ref -d refs/remotes/backup/feature
+
+# Endereço relativo e scp não identificados.
+git -C "$repo" config remote.origin.url "../upstream.git"
+git -C "$repo" update-ref refs/remotes/origin/feature "$D"
+set +e
+pre_err=$(printf '%s\n' "refs/heads/feature $D refs/heads/feature $C" | (cd "$repo" && "$PRE_PUSH" "../upstream.git" "../upstream.git") 2>&1)
+pre_status=$?
+set -e
+assert_status "caminho relativo casa o remoto" 1 "$pre_status"
+assert_contains "caminho relativo mostra a mencao" "mencao proibida"
+set +e
+pre_err=$(printf '%s\n' "refs/heads/feature $C refs/heads/feature $A" | (cd "$repo" && "$PRE_PUSH" "../other.git" "../other.git") 2>&1)
+pre_status=$?
+set -e
+assert_status "caminho relativo desconhecido falha fechado" 1 "$pre_status"
+assert_contains "caminho relativo desconhecido explica a falha" "remoto do push não identificado"
+git -C "$repo" config remote.origin.url "deploy@host:repo.git"
+set +e
+pre_err=$(printf '%s\n' "refs/heads/feature $D refs/heads/feature $C" | (cd "$repo" && "$PRE_PUSH" "deploy@host:repo.git" "deploy@host:repo.git") 2>&1)
+pre_status=$?
+set -e
+assert_status "endereco scp nao esconde commit novo" 1 "$pre_status"
+assert_contains "endereco scp mostra a mencao" "mencao proibida"
+git -C "$repo" config --unset remote.origin.url
+git -C "$repo" update-ref -d refs/remotes/origin/feature
+
+# Duas refs no mesmo push, com rastreio local adiantado nas duas.
+git -C "$repo" update-ref refs/remotes/origin/main "$D"
+git -C "$repo" update-ref refs/remotes/origin/feature "$D"
+run_pre_push "refs/heads/main $D refs/heads/main $C
+refs/heads/feature $D refs/heads/feature $C"
+assert_status "push multiplo nao esconde commit novo" 1 "$pre_status"
+assert_contains "push multiplo mostra a mencao" "mencao proibida"
+git -C "$repo" update-ref refs/remotes/origin/main "$B"
+git -C "$repo" update-ref -d refs/remotes/origin/feature
+
+# Espelho de fetch fora de refs/remotes.
+git -C "$repo" config remote.origin.fetch '+refs/heads/*:refs/cache/origin/*'
+git -C "$repo" update-ref -d refs/remotes/origin/main
+git -C "$repo" update-ref refs/cache/origin/main "$B"
+run_pre_push "refs/heads/feature $C refs/heads/feature $A"
+assert_status "espelho fora de refs/remotes preserva historico" 0 "$pre_status"
+assert_lacks "espelho nao reabre o publicado" "historico publicado"
+git -C "$repo" update-ref refs/cache/origin/feature "$D"
+run_pre_push "refs/heads/feature $D refs/heads/feature $C"
+assert_status "espelho do destino nao esconde commit novo" 1 "$pre_status"
+assert_contains "espelho do destino mostra a mencao" "mencao proibida"
+git -C "$repo" config --unset remote.origin.fetch
+git -C "$repo" update-ref -d refs/cache/origin/main
+git -C "$repo" update-ref -d refs/cache/origin/feature
+git -C "$repo" update-ref refs/remotes/origin/main "$B"
+
 cd "$repo"
 clean="$work/clean-msg.txt"
 msg "$clean" "feat: mensagem nova sem trailer"

@@ -9,8 +9,9 @@
 #   - author or committer name/email matches an AI tool or bot.
 # The range comes from the stdin pairs (local_ref/local_sha and
 # remote_ref/remote_sha), not from branch names or HEAD~1. Commits already
-# reachable from another remote-tracking ref are published history and are
-# not judged again. A missing remote object or a rev-list failure rejects
+# reachable from another published ref are published history and are
+# not judged again. Tracking refs of every update in this push are replaced
+# by the SHAs from stdin. A missing remote object or a rev-list failure rejects
 # the push. A remote_sha of zeros is a new ref, not an error.
 # Then chains to the repository's own pre-push, re-feeding the original
 # stdin so corporate hooks see the exact same ref lines.
@@ -29,6 +30,17 @@ if ! ai_guard_maintenance && [ -n "$input" ]; then
   remote_url="${2:-}"
   bad=""
   bad_state=""
+  prep_skip=$(mktemp "${TMPDIR:-/tmp}/ai-guard-pre-push-skip.XXXXXX") || exit 1
+  prep_auth=$(mktemp "${TMPDIR:-/tmp}/ai-guard-pre-push-auth.XXXXXX") || exit 1
+  prep_err=$(mktemp "${TMPDIR:-/tmp}/ai-guard-pre-push-prep.XXXXXX") || exit 1
+  if ! ai_guard_prepare_push "$remote_name" "$remote_url" "$input" "$prep_skip" "$prep_auth" 2>"$prep_err"; then
+    detail=$(cat "$prep_err")
+    rm -f "$prep_err"
+    [ -n "$detail" ] || detail="remoto do push não identificado ou estado inconsistente"
+    bad_state="
+  ${detail}"
+  else
+    rm -f "$prep_err"
   while read -r local_ref local_sha remote_ref remote_sha; do
     [ -n "${local_sha:-}" ] || continue
     case "$local_sha" in
@@ -40,7 +52,7 @@ if ! ai_guard_maintenance && [ -n "$input" ]; then
   ${local_ref:-ref} -> ${remote_ref:-ref}: falha ao preparar a verificação"
       continue
     }
-    if ! range=$(ai_guard_push_commits "$remote_name" "$local_ref" "$local_sha" "$remote_ref" "$remote_sha" "$remote_url" 2>"$range_err"); then
+    if ! range=$(ai_guard_push_commits "$remote_name" "$local_ref" "$local_sha" "$remote_ref" "$remote_sha" "$remote_url" "$prep_skip" "$prep_auth" 2>"$range_err"); then
       detail=$(cat "$range_err")
       rm -f "$range_err"
       [ -n "$detail" ] || detail="ref remota ausente ou estado inconsistente"
@@ -65,6 +77,8 @@ if ! ai_guard_maintenance && [ -n "$input" ]; then
   done <<EOF
 $input
 EOF
+  fi
+  rm -f "$prep_skip" "$prep_auth"
   if [ -n "$bad_state" ] || [ -n "$bad" ]; then
     detail=""
     if [ -n "$bad_state" ]; then
