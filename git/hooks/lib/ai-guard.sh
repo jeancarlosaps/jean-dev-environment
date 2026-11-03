@@ -349,10 +349,11 @@ EOF
 }
 
 # ai_guard_prepare_push <remote_name> <remote_url> <stdin> <skipfile> <authfile>
-# Records the tracking refs of every update in this push and the remote
-# SHAs received on stdin. Those SHAs are the server state and replace the
-# local tracking objects of the same destinations. Returns 1 when the
-# remote or a fetch refspec cannot be resolved.
+# Records the tracking refs of every update in this push, including
+# deletions, and the remote SHAs received on stdin. Those SHAs are the
+# server state and replace the local tracking objects of the same
+# destinations. Returns 1 when the remote or a fetch refspec cannot be
+# resolved.
 ai_guard_prepare_push() {
   local remote_name="$1" remote_url="$2" input="$3" skipfile="$4" authfile="$5"
   local names="" name="" local_ref="" local_sha="" remote_ref="" remote_sha=""
@@ -367,10 +368,6 @@ ai_guard_prepare_push() {
       ''|*[!0]*)
         [ -n "$remote_sha" ] && printf '%s\n' "$remote_sha" >>"$authfile"
         ;;
-    esac
-    case "$local_sha" in
-      *[!0]*) ;;
-      *) continue ;;
     esac
     while IFS= read -r name; do
       [ -n "$name" ] || continue
@@ -387,11 +384,14 @@ EOF
 
 # ai_guard_append_published <outfile>
 # Appends ref, object and symref for refs/remotes and for fetch destinations
-# stored outside refs/heads. refs/heads stays out: those commits are not
-# published. Returns 1 when a fetch refspec cannot be interpreted.
+# in a dedicated mirror. refs/heads and refs/tags stay out: both namespaces
+# also hold refs that were never published. The mirror is listed from the
+# directory that contains the destination prefix, so a pattern such as
+# refs/cache/origin/out* still sees refs/cache/origin/outmain. Returns 1
+# when a fetch refspec cannot be interpreted.
 ai_guard_append_published() {
   local outfile="$1"
-  local errfile listfile remote specs spec src dst prefix ref sha symref
+  local errfile listfile remote specs spec src dst prefix dir ref sha symref
   errfile=$(mktemp "${TMPDIR:-/tmp}/ai-guard-published.XXXXXX") || return 1
   listfile=$(mktemp "${TMPDIR:-/tmp}/ai-guard-published-list.XXXXXX") || {
     rm -f "$errfile"
@@ -427,7 +427,7 @@ ai_guard_append_published() {
       dst="${spec#*:}"
       [ -n "$dst" ] || continue
       case "$dst" in
-        refs/heads|refs/heads/*) continue ;;
+        refs/heads|refs/heads/*|refs/tags|refs/tags/*) continue ;;
       esac
       if [ "$(ai_guard_star_count "$src")" -gt 1 ] || [ "$(ai_guard_star_count "$dst")" -gt 1 ] || \
         [ "$(ai_guard_star_count "$src")" -ne "$(ai_guard_star_count "$dst")" ]; then
@@ -444,11 +444,27 @@ ai_guard_append_published() {
         rm -f "$errfile" "$listfile"
         return 1
       }
-      case "$prefix" in
-        refs/heads|refs/heads/*) continue ;;
+      dir="$prefix"
+      case "$dir" in
+        */) dir="${dir%/}" ;;
+        */*) dir="${dir%/*}" ;;
+        *)
+          echo "estado inconsistente: refspec de fetch amplo demais (${spec})" >&2
+          rm -f "$errfile" "$listfile"
+          return 1
+          ;;
       esac
-      if ! git for-each-ref --format='%(refname) %(objectname) %(symref)' "$prefix" >"$listfile" 2>"$errfile"; then
-        echo "estado inconsistente: não foi possível ler o espelho ${prefix}" >&2
+      case "$dir" in
+        refs/heads|refs/heads/*|refs/tags|refs/tags/*) continue ;;
+        refs/*) ;;
+        *)
+          echo "estado inconsistente: refspec de fetch amplo demais (${spec})" >&2
+          rm -f "$errfile" "$listfile"
+          return 1
+          ;;
+      esac
+      if ! git for-each-ref --format='%(refname) %(objectname) %(symref)' "$dir" >"$listfile" 2>"$errfile"; then
+        echo "estado inconsistente: não foi possível ler o espelho ${dir}" >&2
         cat "$errfile" >&2
         rm -f "$errfile" "$listfile"
         return 1
@@ -456,7 +472,7 @@ ai_guard_append_published() {
       while read -r ref sha symref; do
         [ -n "$ref" ] || continue
         case "$ref" in
-          refs/heads|refs/heads/*) continue ;;
+          refs/heads|refs/heads/*|refs/tags|refs/tags/*) continue ;;
         esac
         ai_guard_ref_matches "$ref" "$dst" || continue
         printf '%s %s %s\n' "$ref" "$sha" "$symref" >>"$outfile"

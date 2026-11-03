@@ -328,6 +328,39 @@ git -C "$repo" update-ref -d refs/cache/origin/main
 git -C "$repo" update-ref -d refs/cache/origin/feature
 git -C "$repo" update-ref refs/remotes/origin/main "$B"
 
+# Apagar uma ref não deixa o rastreio adiantado esconder outro push.
+git -C "$repo" update-ref refs/remotes/origin/old "$D"
+run_pre_push "refs/heads/old $ZERO refs/heads/old $C
+refs/heads/feature $D refs/heads/feature $A"
+assert_status "delecao nao esconde commit novo" 1 "$pre_status"
+assert_contains "delecao mostra a mencao" "mencao proibida"
+git -C "$repo" update-ref -d refs/remotes/origin/old
+
+# Tag local no mesmo namespace do fetch não é publicação.
+git -C "$repo" config remote.origin.fetch '+refs/tags/*:refs/tags/*'
+git -C "$repo" update-ref refs/tags/so-local "$D"
+run_pre_push "refs/heads/feature $D refs/heads/feature $C"
+assert_status "tag local nao esconde commit novo" 1 "$pre_status"
+assert_contains "tag local mostra a mencao" "mencao proibida"
+git -C "$repo" config --unset remote.origin.fetch
+git -C "$repo" update-ref -d refs/tags/so-local
+
+# O prefixo do espelho pode terminar no meio do nome.
+git -C "$repo" config remote.origin.fetch '+refs/heads/*:refs/cache/origin/out*'
+git -C "$repo" update-ref -d refs/remotes/origin/main
+git -C "$repo" update-ref refs/cache/origin/outmain "$B"
+run_pre_push "refs/heads/feature $C refs/heads/feature $A"
+assert_status "prefixo sem barra preserva historico" 0 "$pre_status"
+assert_lacks "prefixo sem barra nao reabre o publicado" "historico publicado"
+git -C "$repo" update-ref refs/cache/origin/outfeature "$D"
+run_pre_push "refs/heads/feature $D refs/heads/feature $C"
+assert_status "prefixo sem barra nao esconde commit novo" 1 "$pre_status"
+assert_contains "prefixo sem barra mostra a mencao" "mencao proibida"
+git -C "$repo" config --unset remote.origin.fetch
+git -C "$repo" update-ref -d refs/cache/origin/outmain
+git -C "$repo" update-ref -d refs/cache/origin/outfeature
+git -C "$repo" update-ref refs/remotes/origin/main "$B"
+
 cd "$repo"
 clean="$work/clean-msg.txt"
 msg "$clean" "feat: mensagem nova sem trailer"
