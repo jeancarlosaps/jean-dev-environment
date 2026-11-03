@@ -328,6 +328,22 @@ printf 'conteudo\n' | git --git-dir="$bare" hash-object -w --stdin >/dev/null
 git --git-dir="$bare" update-ref refs/tags/blobtag "$blob"
 run_pre_push "refs/heads/main $C refs/heads/main $B"
 assert_status "tag de blob nao interrompe o push" 0 "$pre_status"
+inner=$(printf 'object %s\ntype commit\ntag inner\ntagger T <t@e> 0 +0000\n\ninner\n' "$B" | git -C "$repo" hash-object -t tag -w --stdin)
+outer=$(printf 'object %s\ntype tag\ntag outer\ntagger T <t@e> 0 +0000\n\nouter\n' "$inner" | git -C "$repo" hash-object -t tag -w --stdin)
+printf 'object %s\ntype commit\ntag inner\ntagger T <t@e> 0 +0000\n\ninner\n' "$B" | git --git-dir="$bare" hash-object -t tag -w --stdin >/dev/null
+printf 'object %s\ntype tag\ntag outer\ntagger T <t@e> 0 +0000\n\nouter\n' "$inner" | git --git-dir="$bare" hash-object -t tag -w --stdin >/dev/null
+git --git-dir="$bare" update-ref refs/heads/main "$A"
+git --git-dir="$bare" update-ref refs/tags/outer "$outer"
+run_pre_push "refs/heads/main $C refs/heads/main $A"
+assert_status "tag anotada aninhada preserva historico" 0 "$pre_status"
+assert_lacks "tag aninhada nao reabre o publicado" "historico publicado"
+gone_body=$(printf 'object %s\ntype commit\ntag gone\ntagger T <t@e> 0 +0000\n\ngone\n' "$S")
+gone=$(printf '%s' "$gone_body" | git -C "$repo" hash-object -t tag -w --stdin)
+printf '%s' "$gone_body" | git --git-dir="$bare" hash-object -t tag -w --stdin >/dev/null
+git --git-dir="$bare" update-ref refs/tags/gone "$gone"
+run_pre_push "refs/heads/main $C refs/heads/main $A"
+assert_status "tag com alvo ausente falha fechado" 1 "$pre_status"
+assert_contains "tag com alvo ausente explica a falha" "não está disponível localmente"
 
 # 13. Ref nova com SHA de 64 zeros não é erro quando o commit já está no servidor.
 reset_server

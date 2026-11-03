@@ -196,13 +196,17 @@ ai_guard_batch_ssh() {
 # Pull-request refs and other namespaces are ignored. A tag whose target
 # is a blob or a tree is not an exclusion. Local tracking refs are not
 # consulted. Returns 1 when the remote cannot be queried or an advertised
-# commit is not available locally. The query does not prompt: terminal
-# prompts and askpass are disabled, and OpenSSH runs in BatchMode. A later
-# removal on the server, between this query and the actual update, is
-# outside what a local hook can close.
+# commit is not available locally. Advertised objects are classified in
+# one or two git cat-file --batch-check calls, after duplicate SHAs are
+# collapsed. The query does not prompt: terminal prompts and askpass are
+# disabled, and OpenSSH runs in BatchMode. A later removal on the server,
+# between this query and the actual update, is outside what a local hook
+# can close.
 ai_guard_server_commits() {
   local url="$1" shafile="$2"
   local err="" out="" sha="" ref="" commit="" target="" kind="" shown="" ssh_spec=""
+  local tmp="" result="" oid="" rest="" in_n="" out_n=""
+  local line1="" line2="" raw_name="" raw_type="" peel_name="" peel_type=""
   : >"$shafile"
   if [ -z "$url" ]; then
     echo "estado inconsistente: URL do remoto ausente" >&2
@@ -248,6 +252,10 @@ ai_guard_server_commits() {
     rm -f "$err" "$out"
     return 1
   fi
+  tmp=$(mktemp -d "${TMPDIR:-/tmp}/ai-guard-advertised.XXXXXX") || {
+    rm -f "$err" "$out"
+    return 1
+  }
   while IFS="$(printf '\t')" read -r sha ref; do
     [ -n "$sha" ] || continue
     case "$ref" in
@@ -257,44 +265,117 @@ ai_guard_server_commits() {
     case "$sha" in
       *[!0-9a-fA-F]*) continue ;;
     esac
-    if commit=$(git rev-parse --verify --quiet "${sha}^{commit}"); then
-      printf '%s\n' "$commit" >>"$shafile"
-      continue
-    fi
-    if ! git cat-file -e "$sha" >/dev/null 2>&1; then
-      echo "estado inconsistente: o remoto anuncia ${ref:-ref} (${sha}) mas o commit não está disponível localmente" >&2
-      rm -f "$err" "$out"
-      return 1
-    fi
-    target=$sha
-    while true; do
-      kind=$(git cat-file -t "$target" 2>/dev/null) || {
-        echo "estado inconsistente: o remoto anuncia ${ref:-ref} (${sha}) mas o commit não está disponível localmente" >&2
-        rm -f "$err" "$out"
-        return 1
-      }
-      [ "$kind" = tag ] || break
-      target=$(git rev-parse --verify --quiet "${target}^{}") || {
-        echo "estado inconsistente: o remoto anuncia ${ref:-ref} (${sha}) mas o commit não está disponível localmente" >&2
-        rm -f "$err" "$out"
-        return 1
-      }
-      if ! git cat-file -e "$target" >/dev/null 2>&1; then
-        echo "estado inconsistente: o remoto anuncia ${ref:-ref} (${sha}) mas o commit não está disponível localmente" >&2
-        rm -f "$err" "$out"
-        return 1
-      fi
-    done
+    printf '%s\t%s\n' "$sha" "${ref:-ref}" >>"$tmp/refs"
+  done <"$out"
+  rm -f "$err" "$out"
+  if [ ! -s "$tmp/refs" ]; then
+    rm -rf "$tmp"
+    return 0
+  fi
+  sort -t "$(printf '\t')" -k1,1 -u "$tmp/refs" >"$tmp/unique"
+  awk -F "$(printf '\t')" '{ print $1 }' "$tmp/unique" >"$tmp/shas"
+  awk -F "$(printf '\t')" '{ printf "%s^{commit}\n", $1 }' "$tmp/unique" >"$tmp/peel-in"
+  if ! git cat-file --batch-check='%(objectname) %(objecttype) %(objectsize)' \
+      <"$tmp/peel-in" >"$tmp/peel-out" 2>/dev/null; then
+    echo "estado inconsistente: não foi possível classificar os objetos anunciados pelo remoto" >&2
+    rm -rf "$tmp"
+    return 1
+  fi
+  in_n=$(wc -l <"$tmp/peel-in" | tr -d '[:space:]')
+  out_n=$(wc -l <"$tmp/peel-out" | tr -d '[:space:]')
+  if [ "$in_n" != "$out_n" ]; then
+    echo "estado inconsistente: não foi possível classificar os objetos anunciados pelo remoto" >&2
+    rm -rf "$tmp"
+    return 1
+  fi
+  : >"$tmp/commits"
+  : >"$tmp/need"
+  while IFS="$(printf '\t')" read -r sha result; do
+    [ -n "${sha:-}" ] || continue
+    oid=${result%% *}
+    rest=${result#"$oid"}
+    rest=${rest# }
+    kind=${rest%% *}
     case "$kind" in
-      blob|tree) ;;
+      commit)
+        printf '%s\n' "$oid" >>"$tmp/commits"
+        ;;
+      missing)
+        printf '%s\n' "$sha" >>"$tmp/need"
+        ;;
       *)
-        echo "estado inconsistente: o remoto anuncia ${ref:-ref} (${sha}) mas o commit não está disponível localmente" >&2
-        rm -f "$err" "$out"
+        echo "estado inconsistente: não foi possível classificar os objetos anunciados pelo remoto" >&2
+        rm -rf "$tmp"
         return 1
         ;;
     esac
-  done <"$out"
-  rm -f "$err" "$out"
+  done < <(paste "$tmp/shas" "$tmp/peel-out")
+  if [ -s "$tmp/need" ]; then
+    while read -r sha; do
+      printf '%s\n%s^{}\n' "$sha" "$sha"
+    done <"$tmp/need" >"$tmp/class-in"
+    if ! git cat-file --batch-check='%(objectname) %(objecttype) %(objectsize)' \
+        <"$tmp/class-in" >"$tmp/class-out" 2>/dev/null; then
+      echo "estado inconsistente: não foi possível classificar os objetos anunciados pelo remoto" >&2
+      rm -rf "$tmp"
+      return 1
+    fi
+    in_n=$(wc -l <"$tmp/class-in" | tr -d '[:space:]')
+    out_n=$(wc -l <"$tmp/class-out" | tr -d '[:space:]')
+    if [ "$in_n" != "$out_n" ]; then
+      echo "estado inconsistente: não foi possível classificar os objetos anunciados pelo remoto" >&2
+      rm -rf "$tmp"
+      return 1
+    fi
+    exec 3<"$tmp/class-out"
+    while read -r sha; do
+      if ! IFS= read -r line1 <&3 || ! IFS= read -r line2 <&3; then
+        echo "estado inconsistente: não foi possível classificar os objetos anunciados pelo remoto" >&2
+        exec 3<&-
+        rm -rf "$tmp"
+        return 1
+      fi
+      raw_name=${line1%% *}
+      rest=${line1#"$raw_name"}
+      rest=${rest# }
+      raw_type=${rest%% *}
+      peel_name=${line2%% *}
+      rest=${line2#"$peel_name"}
+      rest=${rest# }
+      peel_type=${rest%% *}
+      case "$raw_type" in
+        blob|tree) ;;
+        commit)
+          printf '%s\n' "$raw_name" >>"$tmp/commits"
+          ;;
+        tag)
+          case "$peel_type" in
+            blob|tree) ;;
+            commit)
+              printf '%s\n' "$peel_name" >>"$tmp/commits"
+              ;;
+            *)
+              ref=$(awk -F "$(printf '\t')" -v s="$sha" '$1 == s { print $2; exit }' "$tmp/unique")
+              echo "estado inconsistente: o remoto anuncia ${ref:-ref} (${sha}) mas o commit não está disponível localmente" >&2
+              exec 3<&-
+              rm -rf "$tmp"
+              return 1
+              ;;
+          esac
+          ;;
+        *)
+          ref=$(awk -F "$(printf '\t')" -v s="$sha" '$1 == s { print $2; exit }' "$tmp/unique")
+          echo "estado inconsistente: o remoto anuncia ${ref:-ref} (${sha}) mas o commit não está disponível localmente" >&2
+          exec 3<&-
+          rm -rf "$tmp"
+          return 1
+          ;;
+      esac
+    done <"$tmp/need"
+    exec 3<&-
+  fi
+  sort -u "$tmp/commits" >"$shafile"
+  rm -rf "$tmp"
   return 0
 }
 
