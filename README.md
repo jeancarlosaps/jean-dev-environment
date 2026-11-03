@@ -343,7 +343,7 @@ flowchart TB
 | `pre-commit` | Bloqueia artefatos de IA staged (`.claude`, `CLAUDE.md`, `.cursor`, `AGENTS.md` e equivalentes) e identidade inválida: autor/committer de ferramenta ou bot, committer diferente do `user.name`/`user.email` configurado |
 | `prepare-commit-msg` | Remove trailers e assinaturas de IA da mensagem (cobre `-m`, templates, merges e squashes) |
 | `commit-msg` | Remove trailers restantes; bloqueia mensagem que ainda mencione ferramenta de IA e **qualquer** `Co-Authored-By` |
-| `pre-push` | Revalida só os commits novos da atualização recebida no stdin. Commit já alcançável por outra ref remota não é julgado de novo. Ref ausente ou `rev-list` com falha interrompe o push |
+| `pre-push` | Revalida só os commits novos. Publicação é o que o destino anuncia em `ls-remote`, mais o SHA remoto de cada atualização no stdin. Ref local de rastreio, espelho, tag ou alias não prova publicação. Sem leitura do remoto, objeto anunciado ausente ou `rev-list` com falha, o push para. Remoto de rede inacessível também para; caminho local e SSH seguem quando a consulta funciona |
 
 - Nenhum hook reescreve autor ou committer: eles só bloqueiam.
 - Cada hook encadeia o hook do próprio repositório (`.git/hooks/<nome>`) quando existir. Os demais hooks padrão em `git/hooks/` são links para `lib/passthrough.sh`, que só delega — hooks corporativos continuam funcionando.

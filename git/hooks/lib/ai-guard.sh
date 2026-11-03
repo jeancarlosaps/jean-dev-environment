@@ -149,425 +149,107 @@ ai_guard_artifacts_allowed() {
   [ "$(git config --bool ai-guard.allowartifacts 2>/dev/null)" = "true" ]
 }
 
-# ai_guard_star_count <text>
-ai_guard_star_count() {
-  local rest="$1" n=0
-  while true; do
-    case "$rest" in
-      *'*'*) n=$((n + 1)); rest="${rest#*\*}" ;;
-      *) break ;;
-    esac
-  done
-  printf '%s\n' "$n"
-}
-
-# ai_guard_ref_matches <ref> <pattern>
-# A single * matches across slashes, including the empty string.
-ai_guard_ref_matches() {
-  local ref="$1" pattern="$2"
-  local prefix suffix rest
-  case "$pattern" in
-    *'*'*)
-      prefix="${pattern%%\**}"
-      suffix="${pattern#*\*}"
-      case "$ref" in
-        "$prefix"*"$suffix") ;;
-        *) return 1 ;;
-      esac
-      rest="${ref#"$prefix"}"
-      if [ -n "$suffix" ]; then
-        rest="${rest%"$suffix"}"
-      fi
-      [ "$ref" = "${prefix}${rest}${suffix}" ]
-      ;;
-    *)
-      [ "$ref" = "$pattern" ]
-      ;;
-  esac
-}
-
-# ai_guard_refspec_dest <ref> <src> <dst>
-# Prints the local destination when <ref> matches the fetch source.
-# Returns 1 when this pattern does not apply. A single * matches across
-# slashes, including the empty string, and may be followed by a suffix.
-ai_guard_refspec_dest() {
-  local ref="$1" src="$2" dst="$3"
-  local prefix suffix rest dpre dsuf
-  case "$src" in
-    *'*'*)
-      ai_guard_ref_matches "$ref" "$src" || return 1
-      prefix="${src%%\**}"
-      suffix="${src#*\*}"
-      rest="${ref#"$prefix"}"
-      if [ -n "$suffix" ]; then
-        rest="${rest%"$suffix"}"
-      fi
-      dpre="${dst%%\**}"
-      dsuf="${dst#*\*}"
-      printf '%s\n' "${dpre}${rest}${dsuf}"
-      ;;
-    *)
-      [ "$ref" = "$src" ] || return 1
-      printf '%s\n' "$dst"
-      ;;
-  esac
-}
-
-# ai_guard_url_key <url>
-# Drops a trailing slash and a trailing .git so equivalent addresses compare.
-ai_guard_url_key() {
-  local u="$1"
-  u="${u%/}"
-  case "$u" in
-    *.git) u="${u%.git}" ;;
-  esac
-  printf '%s\n' "$u"
-}
-
-# ai_guard_looks_like_destination <token>
-# True for URLs, scp-style addresses and paths. A plain remote name is false.
-ai_guard_looks_like_destination() {
-  case "$1" in
-    *://*|*@*:*|/*|./*|../*|*/*) return 0 ;;
-    *) return 1 ;;
-  esac
-}
-
-# ai_guard_remote_url_keys <name>
-# Prints every configured fetch and push URL, one normalized key per line.
-ai_guard_remote_url_keys() {
-  local name="$1" line key
-  while IFS= read -r line; do
-    [ -n "$line" ] || continue
-    key=$(ai_guard_url_key "$line")
-    [ -n "$key" ] || continue
-    printf '%s\n' "$key"
-  done <<EOF
-$(git remote get-url --all "$name" 2>/dev/null || true)
-$(git remote get-url --all --push "$name" 2>/dev/null || true)
-EOF
-}
-
-# ai_guard_remote_names <token> <url>
-# Prints every configured remote for this push, including aliases that share
-# a fetch or push URL. A plain remote name is kept and the comparison
-# continues. An address that matches no remote is rejected. Returns 1 in
-# that case.
-ai_guard_remote_names() {
-  local token="$1" url="$2"
-  local name="" key="" matched=0 keys="" listed=""
-  keys=$(mktemp "${TMPDIR:-/tmp}/ai-guard-url-keys.XXXXXX") || return 1
-  key=$(ai_guard_url_key "$url")
-  [ -n "$key" ] && printf '%s\n' "$key" >>"$keys"
-  if ai_guard_looks_like_destination "$token"; then
-    key=$(ai_guard_url_key "$token")
-    [ -n "$key" ] && printf '%s\n' "$key" >>"$keys"
-  elif [ -n "$token" ] && git config --get-regexp "^remote\\.${token}\\." >/dev/null 2>&1; then
-    ai_guard_remote_url_keys "$token" >>"$keys"
-    printf '%s\n' "$token"
-    listed="${listed}
-${token}"
-    matched=1
-  fi
-  while IFS= read -r name; do
-    [ -n "$name" ] || continue
-    printf '%s\n' "$listed" | grep -Fxq -- "$name" && continue
-    while IFS= read -r key; do
-      [ -n "$key" ] || continue
-      if grep -Fxq -- "$key" "$keys"; then
-        printf '%s\n' "$name"
-        listed="${listed}
-${name}"
-        matched=1
-        break
-      fi
-    done <<EOF
-$(ai_guard_remote_url_keys "$name")
-EOF
-  done <<EOF
-$(git remote)
-EOF
-  rm -f "$keys"
-  [ "$matched" -eq 1 ] && return 0
-  if ai_guard_looks_like_destination "$token"; then
-    echo "estado inconsistente: remoto do push não identificado" >&2
+# ai_guard_server_commits <url> <shafile>
+# Writes the commit SHA of every ref the destination currently advertises.
+# Local tracking refs, mirrors and tags are not consulted. Returns 1 when
+# the remote cannot be queried or an advertised commit is not available
+# locally. Does not prompt. A later removal on the server, between this
+# query and the actual update, is outside what a local hook can close.
+ai_guard_server_commits() {
+  local url="$1" shafile="$2"
+  local err="" out="" sha="" ref="" commit=""
+  : >"$shafile"
+  if [ -z "$url" ]; then
+    echo "estado inconsistente: URL do remoto ausente" >&2
     return 1
   fi
-  printf '%s\n' "$token"
+  err=$(mktemp "${TMPDIR:-/tmp}/ai-guard-ls-remote-err.XXXXXX") || return 1
+  out=$(mktemp "${TMPDIR:-/tmp}/ai-guard-ls-remote-out.XXXXXX") || {
+    rm -f "$err"
+    return 1
+  }
+  if ! GIT_TERMINAL_PROMPT=0 git ls-remote "$url" >"$out" 2>"$err"; then
+    echo "estado inconsistente: não foi possível ler as refs do remoto (${url})" >&2
+    cat "$err" >&2
+    rm -f "$err" "$out"
+    return 1
+  fi
+  while IFS="$(printf '\t')" read -r sha ref; do
+    [ -n "$sha" ] || continue
+    case "$sha" in
+      *[!0-9a-fA-F]*) continue ;;
+    esac
+    if ! commit=$(git rev-parse --verify --quiet "${sha}^{commit}"); then
+      echo "estado inconsistente: o remoto anuncia ${ref:-ref} (${sha}) mas o commit não está disponível localmente" >&2
+      rm -f "$err" "$out"
+      return 1
+    fi
+    printf '%s\n' "$commit" >>"$shafile"
+  done <"$out"
+  rm -f "$err" "$out"
   return 0
 }
 
-# ai_guard_tracking_refs <remote_name> <remote_ref>
-# Prints the local tracking refs that correspond to this destination.
-# Uses remote.<name>.fetch when it exists. Without that config, only a
-# refs/heads/* push falls back to refs/remotes/<remote>/<branch>. A tag
-# never selects a branch-tracking ref just because the short names match.
-# Returns 1 when a configured refspec cannot be interpreted.
-ai_guard_tracking_refs() {
-  local remote_name="$1" remote_ref="$2"
-  local specs="" spec src dst dest src_stars dst_stars
-  if ! specs=$(git config --get-all "remote.${remote_name}.fetch" 2>/dev/null); then
-    specs=""
-  fi
-  if [ -z "$specs" ]; then
-    case "$remote_ref" in
-      refs/heads/*)
-        [ -n "$remote_name" ] || return 0
-        printf 'refs/remotes/%s/%s\n' "$remote_name" "${remote_ref#refs/heads/}"
-        ;;
-    esac
-    return 0
-  fi
-  while IFS= read -r spec; do
-    [ -n "$spec" ] || continue
-    case "$spec" in
-      ^*) continue ;;
-    esac
-    spec="${spec#+}"
-    case "$spec" in
-      *:*) ;;
-      *)
-        echo "estado inconsistente: refspec de fetch sem destino (${spec})" >&2
-        return 1
-        ;;
-    esac
-    src="${spec%%:*}"
-    dst="${spec#*:}"
-    [ -n "$dst" ] || continue
-    src_stars=$(ai_guard_star_count "$src")
-    dst_stars=$(ai_guard_star_count "$dst")
-    if [ "$src_stars" -gt 1 ] || [ "$dst_stars" -gt 1 ] || [ "$src_stars" -ne "$dst_stars" ]; then
-      echo "estado inconsistente: refspec de fetch com curinga inválido (${spec})" >&2
-      return 1
-    fi
-    dest=$(ai_guard_refspec_dest "$remote_ref" "$src" "$dst") || continue
-    [ -n "$dest" ] || continue
-    printf '%s\n' "$dest"
-  done <<EOF
-$specs
-EOF
-}
-
-# ai_guard_prepare_push <remote_name> <remote_url> <stdin> <skipfile> <authfile>
-# Records the tracking refs of every update in this push, including
-# deletions, and the remote SHAs received on stdin. Those SHAs are the
-# server state and replace the local tracking objects of the same
-# destinations. Returns 1 when the remote or a fetch refspec cannot be
-# resolved.
-ai_guard_prepare_push() {
-  local remote_name="$1" remote_url="$2" input="$3" skipfile="$4" authfile="$5"
-  local names="" name="" local_ref="" local_sha="" remote_ref="" remote_sha=""
-  : >"$skipfile"
-  : >"$authfile"
-  if ! names=$(ai_guard_remote_names "$remote_name" "$remote_url"); then
-    return 1
-  fi
+# ai_guard_stdin_shas <input> <shafile>
+# Records the remote SHA git passed for every update in this push, including
+# deletions. Those values describe the corresponding remote ref. An all-zero
+# SHA is a new ref and is not an exclusion.
+ai_guard_stdin_shas() {
+  local input="$1" shafile="$2"
+  local local_ref="" local_sha="" remote_ref="" remote_sha=""
+  : >"$shafile"
   while read -r local_ref local_sha remote_ref remote_sha; do
     [ -n "${local_sha:-}" ] || continue
     case "$remote_sha" in
       ''|*[!0]*)
-        [ -n "$remote_sha" ] && printf '%s\n' "$remote_sha" >>"$authfile"
+        [ -n "$remote_sha" ] && printf '%s\n' "$remote_sha" >>"$shafile"
         ;;
     esac
-    while IFS= read -r name; do
-      [ -n "$name" ] || continue
-      if ! ai_guard_tracking_refs "$name" "$remote_ref" >>"$skipfile"; then
-        return 1
-      fi
-    done <<EOF
-$names
-EOF
   done <<EOF
 $input
 EOF
 }
 
-# ai_guard_append_published <outfile>
-# Appends ref, object and symref for refs/remotes and for fetch destinations
-# in a dedicated mirror. refs/heads and refs/tags stay out: both namespaces
-# also hold refs that were never published. The mirror is listed from the
-# directory that contains the destination prefix, so a pattern such as
-# refs/cache/origin/out* still sees refs/cache/origin/outmain. Returns 1
-# when a fetch refspec cannot be interpreted.
-ai_guard_append_published() {
-  local outfile="$1"
-  local errfile listfile remote specs spec src dst prefix dir ref sha symref
-  errfile=$(mktemp "${TMPDIR:-/tmp}/ai-guard-published.XXXXXX") || return 1
-  listfile=$(mktemp "${TMPDIR:-/tmp}/ai-guard-published-list.XXXXXX") || {
-    rm -f "$errfile"
-    return 1
-  }
-  if ! git for-each-ref --format='%(refname) %(objectname) %(symref)' refs/remotes >>"$outfile" 2>"$errfile"; then
-    echo "estado inconsistente: não foi possível ler as refs remotas conhecidas" >&2
-    cat "$errfile" >&2
-    rm -f "$errfile" "$listfile"
-    return 1
-  fi
-  while IFS= read -r remote; do
-    [ -n "$remote" ] || continue
-    if ! specs=$(git config --get-all "remote.${remote}.fetch" 2>/dev/null); then
-      specs=""
-    fi
-    [ -n "$specs" ] || continue
-    while IFS= read -r spec; do
-      [ -n "$spec" ] || continue
-      case "$spec" in
-        ^*) continue ;;
-      esac
-      spec="${spec#+}"
-      case "$spec" in
-        *:*) ;;
-        *)
-          echo "estado inconsistente: refspec de fetch sem destino (${spec})" >&2
-          rm -f "$errfile" "$listfile"
-          return 1
-          ;;
-      esac
-      src="${spec%%:*}"
-      dst="${spec#*:}"
-      [ -n "$dst" ] || continue
-      case "$dst" in
-        refs/heads|refs/heads/*|refs/tags|refs/tags/*) continue ;;
-      esac
-      if [ "$(ai_guard_star_count "$src")" -gt 1 ] || [ "$(ai_guard_star_count "$dst")" -gt 1 ] || \
-        [ "$(ai_guard_star_count "$src")" -ne "$(ai_guard_star_count "$dst")" ]; then
-        echo "estado inconsistente: refspec de fetch com curinga inválido (${spec})" >&2
-        rm -f "$errfile" "$listfile"
-        return 1
-      fi
-      case "$dst" in
-        *'*'*) prefix="${dst%%\**}" ;;
-        *) prefix="$dst" ;;
-      esac
-      [ -n "$prefix" ] || {
-        echo "estado inconsistente: refspec de fetch amplo demais (${spec})" >&2
-        rm -f "$errfile" "$listfile"
-        return 1
-      }
-      dir="$prefix"
-      case "$dir" in
-        */) dir="${dir%/}" ;;
-        */*) dir="${dir%/*}" ;;
-        *)
-          echo "estado inconsistente: refspec de fetch amplo demais (${spec})" >&2
-          rm -f "$errfile" "$listfile"
-          return 1
-          ;;
-      esac
-      case "$dir" in
-        refs/heads|refs/heads/*|refs/tags|refs/tags/*) continue ;;
-        refs/*) ;;
-        *)
-          echo "estado inconsistente: refspec de fetch amplo demais (${spec})" >&2
-          rm -f "$errfile" "$listfile"
-          return 1
-          ;;
-      esac
-      if ! git for-each-ref --format='%(refname) %(objectname) %(symref)' "$dir" >"$listfile" 2>"$errfile"; then
-        echo "estado inconsistente: não foi possível ler o espelho ${dir}" >&2
-        cat "$errfile" >&2
-        rm -f "$errfile" "$listfile"
-        return 1
-      fi
-      while read -r ref sha symref; do
-        [ -n "$ref" ] || continue
-        case "$ref" in
-          refs/heads|refs/heads/*|refs/tags|refs/tags/*) continue ;;
-        esac
-        ai_guard_ref_matches "$ref" "$dst" || continue
-        printf '%s %s %s\n' "$ref" "$sha" "$symref" >>"$outfile"
-      done <"$listfile"
-    done <<EOF
-$specs
-EOF
-  done <<EOF
-$(git remote)
-EOF
-  rm -f "$errfile" "$listfile"
-  return 0
-}
-
-# ai_guard_push_commits <remote_name> <local_ref> <local_sha> <remote_ref> <remote_sha> [remote_url] [skipfile] [authfile]
-# Prints commits introduced by this ref update. A commit is included only
-# when it is reachable from local_sha and not reachable from the remote
-# SHAs received on stdin for this push, nor from any other published ref.
-# Tracking refs of every destination in the push are not exclusions: the
-# stdin SHAs are the server state, including when another update in the
-# same push still has a stale local copy. Fetch destinations outside
-# refs/remotes count as published. refs/heads does not. A remote_sha made
-# only of zeros means the destination ref does not exist yet. Does not use
-# HEAD~1. Returns 1, with no SHAs on stdout, when the range cannot be
-# determined.
+# ai_guard_push_commits <remote_name> <local_ref> <local_sha> <remote_ref> <remote_sha> <remote_url> <server_file> <auth_file>
+# Prints commits introduced by this ref update. A commit is new when it is
+# reachable from local_sha and not reachable from the remote SHAs of this
+# push, nor from the commits the destination advertised. A local tracking
+# ref is not publication. Returns 1, with no SHAs on stdout, when the range
+# cannot be determined.
 ai_guard_push_commits() {
-  local remote_name="$1" local_ref="$2" local_sha="$3" remote_ref="$4" remote_sha="$5"
-  local remote_url="${6:-}" shared_skip="${7:-}" shared_auth="${8:-}"
-  local ref="" sha="" symref="" errfile="" outfile="" skipfile="" status=0
-  local names="" name="" auth="" own_skip=0
+  local local_ref="$2" local_sha="$3" remote_sha="$5"
+  local server_file="${7:-}" auth_file="${8:-}"
+  local sha="" errfile="" outfile="" status=0
   local -a exclude
 
   case "$remote_sha" in
     ''|*[!0]*) ;;
     *) remote_sha="" ;;
   esac
+  if [ -z "$server_file" ] || [ ! -f "$server_file" ]; then
+    echo "estado inconsistente: confirmação do remoto ausente para ${local_ref}" >&2
+    return 1
+  fi
 
   errfile=$(mktemp "${TMPDIR:-/tmp}/ai-guard-push-err.XXXXXX") || return 1
   outfile=$(mktemp "${TMPDIR:-/tmp}/ai-guard-push-out.XXXXXX") || {
     rm -f "$errfile"
     return 1
   }
-  if [ -n "$shared_skip" ]; then
-    skipfile="$shared_skip"
-  else
-    skipfile=$(mktemp "${TMPDIR:-/tmp}/ai-guard-push-skip.XXXXXX") || {
-      rm -f "$errfile" "$outfile"
-      return 1
-    }
-    own_skip=1
-    if ! names=$(ai_guard_remote_names "$remote_name" "$remote_url"); then
-      rm -f "$errfile" "$outfile" "$skipfile"
-      return 1
-    fi
-    : >"$skipfile"
-    while IFS= read -r name; do
-      [ -n "$name" ] || continue
-      if ! ai_guard_tracking_refs "$name" "$remote_ref" >>"$skipfile"; then
-        rm -f "$errfile" "$outfile" "$skipfile"
-        return 1
-      fi
-    done <<EOF
-$names
-EOF
-  fi
-
-  : >"$outfile"
-  if ! ai_guard_append_published "$outfile" 2>"$errfile"; then
-    [ -s "$errfile" ] && cat "$errfile" >&2
-    rm -f "$errfile" "$outfile"
-    [ "$own_skip" -eq 1 ] && rm -f "$skipfile"
-    return 1
-  fi
 
   exclude=()
   [ -n "$remote_sha" ] && exclude+=("$remote_sha")
-  if [ -n "$shared_auth" ]; then
-    while IFS= read -r auth; do
-      [ -n "$auth" ] || continue
-      exclude+=("$auth")
-    done <"$shared_auth"
+  if [ -n "$auth_file" ] && [ -f "$auth_file" ]; then
+    while IFS= read -r sha; do
+      [ -n "$sha" ] || continue
+      exclude+=("$sha")
+    done <"$auth_file"
   fi
-  while read -r ref sha symref; do
-    [ -n "$ref" ] || continue
+  while IFS= read -r sha; do
     [ -n "$sha" ] || continue
-    if [ -s "$skipfile" ] && grep -Fxq -- "$ref" "$skipfile"; then
-      continue
-    fi
-    if [ -n "$symref" ] && [ -s "$skipfile" ] && grep -Fxq -- "$symref" "$skipfile"; then
-      continue
-    fi
     exclude+=("$sha")
-  done <"$outfile"
+  done <"$server_file"
 
-  : >"$errfile"
   if [ "${#exclude[@]}" -eq 0 ]; then
     git rev-list "$local_sha" >"$outfile" 2>"$errfile"
   else
@@ -581,13 +263,11 @@ EOF
       cat "$errfile" >&2
     fi
     rm -f "$errfile" "$outfile"
-    [ "$own_skip" -eq 1 ] && rm -f "$skipfile"
     return 1
   fi
 
   cat "$outfile"
   rm -f "$errfile" "$outfile"
-  [ "$own_skip" -eq 1 ] && rm -f "$skipfile"
   return 0
 }
 

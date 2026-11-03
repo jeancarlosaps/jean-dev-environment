@@ -1,6 +1,6 @@
 #!/bin/bash
-# Harness do AI Guard. Não faz push: alimenta pre-push e commit-msg com
-# stdin e arquivo de mensagem. A política de coautoria e de menção a IA
+# Harness do AI Guard. Não envia nada ao GitHub. O servidor é um bare local:
+# o hook recebe a URL dele e o stdin. A política de coautoria e de menção a IA
 # permanece; o que muda é o conjunto de commits julgados.
 set -eu
 set -o pipefail
@@ -49,6 +49,7 @@ assert_lacks() {
 work=$(mktemp -d "${TMPDIR:-/tmp}/ai-guard-test.XXXXXX")
 empty_hooks="$work/empty-hooks"
 repo="$work/repo"
+bare="$work/server.git"
 mkdir -p "$empty_hooks"
 trap 'rm -rf "$work"' EXIT
 
@@ -97,40 +98,58 @@ E=$(git -C "$repo" rev-parse HEAD)
 git -C "$repo" checkout -q main
 
 pre_err=""
+git init --bare -q "$bare"
+ln -s "$bare" "$work/push-b.git"
+
+publish() {
+  git -c core.hooksPath="$empty_hooks" --git-dir="$bare" fetch -q "$repo" "+${1}:${2}"
+}
+
+reset_server() {
+  git --git-dir="$bare" for-each-ref --format='delete %(refname)' refs | git --git-dir="$bare" update-ref --stdin
+}
+
+clear_local() {
+  git -C "$repo" for-each-ref --format='delete %(refname)' refs/remotes refs/tags refs/cache | git -C "$repo" update-ref --stdin
+  git -C "$repo" config --unset-all remote.origin.fetch 2>/dev/null || true
+  git -C "$repo" config --unset-all remote.origin.url 2>/dev/null || true
+  git -C "$repo" config --unset-all remote.backup.url 2>/dev/null || true
+}
+
 run_pre_push() {
-  local input="$1"
+  local input="$1" url="${2:-$bare}" remote_name="${3:-origin}"
   set +e
-  pre_err=$(printf '%s\n' "$input" | (cd "$repo" && "$PRE_PUSH" origin "file://$work/nowhere") 2>&1)
+  pre_err=$(printf '%s\n' "$input" | (cd "$repo" && "$PRE_PUSH" "$remote_name" "$url") 2>&1)
   pre_status=$?
   set -e
 }
 
-# 1. Commits novos válidos sobre histórico que já contém coautoria publicada.
-git -C "$repo" update-ref refs/remotes/origin/main "$B"
-git -C "$repo" symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/main
-run_pre_push "refs/heads/main $C refs/heads/main $B"
-assert_status "push valido sobre coautoria publicada" 0 "$pre_status"
-assert_lacks "push valido nao cita o commit publicado" "historico publicado"
+# 1. Commit publicado no servidor, em outra branch, não é reavaliado.
+clear_local
+reset_server
+publish "$B" refs/heads/dev
+publish "$A" refs/heads/main
+run_pre_push "refs/heads/main $C refs/heads/main $A"
+assert_status "historico publicado em outra branch do servidor" 0 "$pre_status"
+assert_lacks "nao reavalia o commit publicado" "historico publicado"
 
-# 2. Commit novo que viola regra legítima continua bloqueado.
-run_pre_push "refs/heads/main $D refs/heads/main $B"
+# 2. Commit novo proibido continua bloqueado.
+run_pre_push "refs/heads/main $D refs/heads/main $A"
 assert_status "commit novo com mencao proibida" 1 "$pre_status"
 assert_contains "mencao proibida aparece" "mencao proibida"
-assert_contains "motivo e mencao a IA" "menção a IA"
-assert_lacks "coautoria publicada nao entra na lista" "historico publicado"
+assert_lacks "publicado nao entra na lista" "historico publicado"
 
-# 3. Branch nova: só o que ainda não está em nenhum remoto.
-git -C "$repo" update-ref refs/remotes/origin/main "$C"
+# 3. Branch nova.
+publish "$C" refs/heads/main
 run_pre_push "refs/heads/feature $C refs/heads/feature $ZERO"
 assert_status "branch nova sem commit inedito" 0 "$pre_status"
 run_pre_push "refs/heads/main $D refs/heads/nova $ZERO"
 assert_status "branch nova com commit proibido" 1 "$pre_status"
 assert_contains "branch nova aponta o commit proibido" "mencao proibida"
-assert_lacks "branch nova nao reabre o historico publicado" "historico publicado"
 
-# 4. Várias refs no mesmo push: cada atualização é julgada.
-git -C "$repo" update-ref refs/remotes/origin/main "$B"
-git -C "$repo" update-ref -d refs/remotes/origin/feature 2>/dev/null || true
+# 4. Várias refs no mesmo push.
+reset_server
+publish "$B" refs/heads/main
 run_pre_push "refs/heads/main $D refs/heads/main $B
 refs/heads/feature $E refs/heads/feature $ZERO"
 assert_status "push com duas refs" 1 "$pre_status"
@@ -138,228 +157,118 @@ assert_contains "primeira ref proibida" "mencao proibida"
 assert_contains "segunda ref proibida" "coautoria nova"
 assert_lacks "refs multiplas nao listam o publicado" "historico publicado"
 
-# 5. Commit antigo no histórico compartilhado não bloqueia por si só.
-git -C "$repo" update-ref refs/remotes/origin/main "$C"
-run_pre_push "refs/heads/feature $C refs/heads/feature $A"
-assert_status "feature atrasada que incorpora o historico" 0 "$pre_status"
-
-# A ref de rastreio da própria branch, mesmo adiantada, não absolve commit novo.
-git -C "$repo" update-ref refs/remotes/origin/feature "$D"
-git -C "$repo" symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/feature
-run_pre_push "refs/heads/feature $D refs/heads/feature $C"
-assert_status "rastreio local adiantado nao libera commit novo" 1 "$pre_status"
-assert_contains "commit novo continua visivel" "mencao proibida"
-git -C "$repo" symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/main
-git -C "$repo" update-ref -d refs/remotes/origin/feature
-
-# 6. Objeto remoto ausente falha fechado.
-run_pre_push "refs/heads/main $C refs/heads/main aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-assert_status "objeto remoto ausente" 1 "$pre_status"
-assert_contains "mensagem de estado inconsistente" "estado inconsistente"
-
-# 7. Coautoria humana legítima não é classificada como ferramenta.
-#    A política continua bloqueando Co-Authored-By em commit novo.
-#    O mesmo trailer, já publicado, não bloqueia outro push.
-git -C "$repo" update-ref refs/remotes/origin/main "$B"
+# 5. Coautoria nova bloqueada; a já publicada não vira menção a IA.
+publish "$C" refs/heads/main
 run_pre_push "refs/heads/feature $E refs/heads/feature $C"
 assert_status "coautoria humana nova bloqueada pela politica" 1 "$pre_status"
 assert_contains "motivo de coautoria" "coautoria"
 assert_lacks "coautoria humana nao vira mencao a IA" "menção a IA"
 assert_lacks "nao aponta o trailer publicado" "historico publicado"
 
-# Tag com o mesmo nome de uma branch não dispensa o rastreio dessa branch.
-git -C "$repo" update-ref refs/remotes/origin/main "$B"
-git -C "$repo" symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/main
-git -C "$repo" update-ref refs/tags/main "$B"
-run_pre_push "refs/tags/main $B refs/tags/main $ZERO"
-assert_status "tag com o mesmo nome da branch publicada" 0 "$pre_status"
-assert_lacks "tag nao reabre o historico publicado" "historico publicado"
-run_pre_push "refs/tags/alerta $D refs/tags/alerta $ZERO"
-assert_status "tag nova com commit proibido" 1 "$pre_status"
-assert_contains "tag nova aponta a mencao proibida" "mencao proibida"
-assert_lacks "tag nova nao lista o historico publicado" "historico publicado"
+# 6. Ref de rastreio alheia adiantada não esconde commit ausente no servidor.
+reset_server
+publish "$C" refs/heads/main
+git -C "$repo" update-ref refs/remotes/origin/dev "$D"
+run_pre_push "refs/heads/feature $D refs/heads/feature $C"
+assert_status "rastreio alheio adiantado nao libera commit novo" 1 "$pre_status"
+assert_contains "rastreio alheio mostra a mencao" "mencao proibida"
 
-# Refspec de fetch fora do mapeamento convencional.
+# O mesmo commit, quando o servidor realmente o anuncia, não é reavaliado.
+publish "$D" refs/heads/dev
+run_pre_push "refs/heads/feature $D refs/heads/feature $C"
+assert_status "commit anunciado pelo servidor nao e reavaliado" 0 "$pre_status"
+assert_lacks "anuncio do servidor nao lista a mencao" "mencao proibida"
+
+# 7. Rastreio da própria ref, espelho, tag local e alias também não provam publicação.
+clear_local
+reset_server
+publish "$C" refs/heads/feature
+git -C "$repo" update-ref refs/remotes/origin/feature "$D"
 git -C "$repo" config remote.origin.fetch '+refs/heads/*:refs/remotes/origin/tracked/*'
 git -C "$repo" update-ref refs/remotes/origin/tracked/feature "$D"
-git -C "$repo" update-ref refs/remotes/origin/feature "$C"
-run_pre_push "refs/heads/feature $D refs/heads/feature $C"
-assert_status "refspec personalizado nao esconde commit novo" 1 "$pre_status"
-assert_contains "refspec personalizado mostra a mencao" "mencao proibida"
-git -C "$repo" update-ref refs/remotes/origin/tracked/main "$B"
-git -C "$repo" symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/tracked/main
-git -C "$repo" update-ref -d refs/remotes/origin/main
-git -C "$repo" update-ref -d refs/remotes/origin/feature
-git -C "$repo" update-ref refs/remotes/origin/tracked/feature "$A"
-run_pre_push "refs/heads/feature $C refs/heads/feature $A"
-assert_status "refspec personalizado preserva historico publicado" 0 "$pre_status"
-assert_lacks "refspec personalizado nao lista o publicado" "historico publicado"
-git -C "$repo" config remote.origin.fetch 'refs/heads/*'
-run_pre_push "refs/heads/feature $C refs/heads/feature $A"
-assert_status "refspec sem destino falha fechado" 1 "$pre_status"
-assert_contains "refspec invalido explica a falha" "estado inconsistente"
-git -C "$repo" config --unset remote.origin.fetch
-git -C "$repo" update-ref -d refs/remotes/origin/tracked/feature
-git -C "$repo" update-ref -d refs/remotes/origin/tracked/main
-git -C "$repo" update-ref -d refs/remotes/origin/feature
-git -C "$repo" update-ref refs/remotes/origin/main "$B"
-
-# Curinga com sufixo: refs/heads/*-release -> refs/remotes/origin/*-tracked.
-git -C "$repo" config remote.origin.fetch '+refs/heads/*-release:refs/remotes/origin/*-tracked'
-git -C "$repo" update-ref refs/remotes/origin/feature-tracked "$D"
-run_pre_push "refs/heads/feature-release $D refs/heads/feature-release $C"
-assert_status "refspec com sufixo nao esconde commit novo" 1 "$pre_status"
-assert_contains "refspec com sufixo mostra a mencao" "mencao proibida"
-git -C "$repo" update-ref refs/remotes/origin/feature-tracked "$A"
-run_pre_push "refs/heads/feature-release $C refs/heads/feature-release $A"
-assert_status "refspec com sufixo preserva historico publicado" 0 "$pre_status"
-assert_lacks "refspec com sufixo nao lista o publicado" "historico publicado"
-
-# Curinga vazio: release* casa com release.
-git -C "$repo" config remote.origin.fetch '+refs/heads/release*:refs/remotes/origin/out*'
-git -C "$repo" update-ref refs/remotes/origin/out "$D"
-run_pre_push "refs/heads/release $D refs/heads/release $C"
-assert_status "refspec com curinga vazio nao esconde commit novo" 1 "$pre_status"
-assert_contains "curinga vazio mostra a mencao" "mencao proibida"
-git -C "$repo" config --unset remote.origin.fetch
-git -C "$repo" update-ref -d refs/remotes/origin/feature-tracked
-git -C "$repo" update-ref -d refs/remotes/origin/out
-
-# Push pelo endereço do remoto, não pelo nome.
-git -C "$repo" config remote.origin.url "file://$work/nowhere.git"
-git -C "$repo" update-ref refs/remotes/origin/feature "$D"
-set +e
-pre_err=$(printf '%s\n' "refs/heads/feature $D refs/heads/feature $C" | (cd "$repo" && "$PRE_PUSH" "file://$work/nowhere" "file://$work/nowhere") 2>&1)
-pre_status=$?
-set -e
-assert_status "push por URL nao esconde commit novo" 1 "$pre_status"
-assert_contains "push por URL mostra a mencao" "mencao proibida"
-set +e
-pre_err=$(printf '%s\n' "refs/heads/feature $C refs/heads/feature $A" | (cd "$repo" && "$PRE_PUSH" "file://$work/other" "file://$work/other") 2>&1)
-pre_status=$?
-set -e
-assert_status "URL sem remoto configurado falha fechado" 1 "$pre_status"
-assert_contains "URL desconhecida explica a falha" "remoto do push não identificado"
-git -C "$repo" config --unset remote.origin.url
-git -C "$repo" update-ref -d refs/remotes/origin/feature
-
-# Segunda pushurl do mesmo remoto.
-git -C "$repo" config remote.origin.url "file://$work/fetch-only"
-git -C "$repo" config --add remote.origin.pushurl "file://$work/push-a"
-git -C "$repo" config --add remote.origin.pushurl "file://$work/push-b.git"
-git -C "$repo" update-ref refs/remotes/origin/main "$B"
-set +e
-pre_err=$(printf '%s\n' "refs/heads/main $C refs/heads/main $B" | (cd "$repo" && "$PRE_PUSH" "file://$work/push-b" "file://$work/push-b") 2>&1)
-pre_status=$?
-set -e
-assert_status "segunda pushurl aceita commit valido" 0 "$pre_status"
-git -C "$repo" update-ref refs/remotes/origin/feature "$D"
-set +e
-pre_err=$(printf '%s\n' "refs/heads/feature $D refs/heads/feature $C" | (cd "$repo" && "$PRE_PUSH" "file://$work/push-b" "file://$work/push-b") 2>&1)
-pre_status=$?
-set -e
-assert_status "segunda pushurl nao esconde commit novo" 1 "$pre_status"
-assert_contains "segunda pushurl mostra a mencao" "mencao proibida"
-git -C "$repo" config --unset-all remote.origin.pushurl
-git -C "$repo" config --unset remote.origin.url
-git -C "$repo" update-ref -d refs/remotes/origin/feature
-
-# Alias com a mesma URL.
-git -C "$repo" config remote.origin.url "file://$work/repo.git"
-git -C "$repo" config remote.backup.url "file://$work/repo"
-git -C "$repo" update-ref refs/remotes/origin/feature "$D"
+git -C "$repo" update-ref refs/cache/origin/feature "$D"
+git -C "$repo" update-ref refs/tags/so-local "$D"
+git -C "$repo" config remote.backup.url "$bare"
 git -C "$repo" update-ref refs/remotes/backup/feature "$D"
 run_pre_push "refs/heads/feature $D refs/heads/feature $C"
-assert_status "alias nao esconde commit novo" 1 "$pre_status"
-assert_contains "alias mostra a mencao" "mencao proibida"
-git -C "$repo" config --unset remote.backup.url
-git -C "$repo" config --unset remote.origin.url
-git -C "$repo" update-ref -d refs/remotes/origin/feature
-git -C "$repo" update-ref -d refs/remotes/backup/feature
+assert_status "refs locais nao escondem commit novo" 1 "$pre_status"
+assert_contains "refs locais mostram a mencao" "mencao proibida"
 
-# Endereço relativo e scp não identificados.
-git -C "$repo" config remote.origin.url "../upstream.git"
-git -C "$repo" update-ref refs/remotes/origin/feature "$D"
-set +e
-pre_err=$(printf '%s\n' "refs/heads/feature $D refs/heads/feature $C" | (cd "$repo" && "$PRE_PUSH" "../upstream.git" "../upstream.git") 2>&1)
-pre_status=$?
-set -e
-assert_status "caminho relativo casa o remoto" 1 "$pre_status"
-assert_contains "caminho relativo mostra a mencao" "mencao proibida"
-set +e
-pre_err=$(printf '%s\n' "refs/heads/feature $C refs/heads/feature $A" | (cd "$repo" && "$PRE_PUSH" "../other.git" "../other.git") 2>&1)
-pre_status=$?
-set -e
-assert_status "caminho relativo desconhecido falha fechado" 1 "$pre_status"
-assert_contains "caminho relativo desconhecido explica a falha" "remoto do push não identificado"
-git -C "$repo" config remote.origin.url "deploy@host:repo.git"
-set +e
-pre_err=$(printf '%s\n' "refs/heads/feature $D refs/heads/feature $C" | (cd "$repo" && "$PRE_PUSH" "deploy@host:repo.git" "deploy@host:repo.git") 2>&1)
-pre_status=$?
-set -e
-assert_status "endereco scp nao esconde commit novo" 1 "$pre_status"
-assert_contains "endereco scp mostra a mencao" "mencao proibida"
-git -C "$repo" config --unset remote.origin.url
-git -C "$repo" update-ref -d refs/remotes/origin/feature
+# 8. Deleção não usa o rastreio adiantado da ref apagada.
+clear_local
+reset_server
+publish "$C" refs/heads/old
+git -C "$repo" update-ref refs/remotes/origin/old "$D"
+run_pre_push "refs/heads/old $ZERO refs/heads/old $C
+refs/heads/feature $D refs/heads/feature $A"
+assert_status "delecao nao esconde commit novo" 1 "$pre_status"
+assert_contains "delecao mostra a mencao" "mencao proibida"
 
-# Duas refs no mesmo push, com rastreio local adiantado nas duas.
+# 9. Duas refs com rastreio local adiantado nas duas.
+clear_local
+reset_server
+publish "$C" refs/heads/main
+publish "$C" refs/heads/feature
 git -C "$repo" update-ref refs/remotes/origin/main "$D"
 git -C "$repo" update-ref refs/remotes/origin/feature "$D"
 run_pre_push "refs/heads/main $D refs/heads/main $C
 refs/heads/feature $D refs/heads/feature $C"
 assert_status "push multiplo nao esconde commit novo" 1 "$pre_status"
 assert_contains "push multiplo mostra a mencao" "mencao proibida"
-git -C "$repo" update-ref refs/remotes/origin/main "$B"
-git -C "$repo" update-ref -d refs/remotes/origin/feature
 
-# Espelho de fetch fora de refs/remotes.
-git -C "$repo" config remote.origin.fetch '+refs/heads/*:refs/cache/origin/*'
-git -C "$repo" update-ref -d refs/remotes/origin/main
-git -C "$repo" update-ref refs/cache/origin/main "$B"
-run_pre_push "refs/heads/feature $C refs/heads/feature $A"
-assert_status "espelho fora de refs/remotes preserva historico" 0 "$pre_status"
-assert_lacks "espelho nao reabre o publicado" "historico publicado"
-git -C "$repo" update-ref refs/cache/origin/feature "$D"
-run_pre_push "refs/heads/feature $D refs/heads/feature $C"
-assert_status "espelho do destino nao esconde commit novo" 1 "$pre_status"
-assert_contains "espelho do destino mostra a mencao" "mencao proibida"
-git -C "$repo" config --unset remote.origin.fetch
-git -C "$repo" update-ref -d refs/cache/origin/main
-git -C "$repo" update-ref -d refs/cache/origin/feature
-git -C "$repo" update-ref refs/remotes/origin/main "$B"
-
-# Apagar uma ref não deixa o rastreio adiantado esconder outro push.
-git -C "$repo" update-ref refs/remotes/origin/old "$D"
-run_pre_push "refs/heads/old $ZERO refs/heads/old $C
-refs/heads/feature $D refs/heads/feature $A"
-assert_status "delecao nao esconde commit novo" 1 "$pre_status"
-assert_contains "delecao mostra a mencao" "mencao proibida"
-git -C "$repo" update-ref -d refs/remotes/origin/old
-
-# Tag local no mesmo namespace do fetch não é publicação.
-git -C "$repo" config remote.origin.fetch '+refs/tags/*:refs/tags/*'
+# 10. Tag no servidor prova publicação; tag só local não.
+clear_local
+reset_server
+publish "$A" refs/heads/main
+publish "$B" refs/tags/v1
+run_pre_push "refs/heads/main $C refs/heads/main $A"
+assert_status "tag anunciada preserva historico" 0 "$pre_status"
+assert_lacks "tag anunciada nao reabre o publicado" "historico publicado"
 git -C "$repo" update-ref refs/tags/so-local "$D"
-run_pre_push "refs/heads/feature $D refs/heads/feature $C"
+run_pre_push "refs/heads/main $D refs/heads/main $A"
 assert_status "tag local nao esconde commit novo" 1 "$pre_status"
 assert_contains "tag local mostra a mencao" "mencao proibida"
-git -C "$repo" config --unset remote.origin.fetch
-git -C "$repo" update-ref -d refs/tags/so-local
 
-# O prefixo do espelho pode terminar no meio do nome.
-git -C "$repo" config remote.origin.fetch '+refs/heads/*:refs/cache/origin/out*'
-git -C "$repo" update-ref -d refs/remotes/origin/main
-git -C "$repo" update-ref refs/cache/origin/outmain "$B"
-run_pre_push "refs/heads/feature $C refs/heads/feature $A"
-assert_status "prefixo sem barra preserva historico" 0 "$pre_status"
-assert_lacks "prefixo sem barra nao reabre o publicado" "historico publicado"
-git -C "$repo" update-ref refs/cache/origin/outfeature "$D"
-run_pre_push "refs/heads/feature $D refs/heads/feature $C"
-assert_status "prefixo sem barra nao esconde commit novo" 1 "$pre_status"
-assert_contains "prefixo sem barra mostra a mencao" "mencao proibida"
-git -C "$repo" config --unset remote.origin.fetch
-git -C "$repo" update-ref -d refs/cache/origin/outmain
-git -C "$repo" update-ref -d refs/cache/origin/outfeature
-git -C "$repo" update-ref refs/remotes/origin/main "$B"
+# 11. Outra grafia da mesma URL, caminho relativo e URL inexistente.
+clear_local
+reset_server
+publish "$C" refs/heads/feature
+git -C "$repo" update-ref refs/remotes/origin/feature "$D"
+run_pre_push "refs/heads/feature $D refs/heads/feature $C" "$work/push-b.git"
+assert_status "segunda URL do mesmo servidor nao esconde commit novo" 1 "$pre_status"
+assert_contains "segunda URL mostra a mencao" "mencao proibida"
+run_pre_push "refs/heads/feature $C refs/heads/feature $A" "../server.git"
+assert_status "caminho relativo le o servidor" 0 "$pre_status"
+run_pre_push "refs/heads/feature $C refs/heads/feature $A" "$work/ausente.git"
+assert_status "URL sem remoto falha fechado" 1 "$pre_status"
+assert_contains "URL sem remoto explica a falha" "não foi possível ler as refs do remoto"
+
+# 12. SHA remoto inválido e objeto anunciado que não está local.
+reset_server
+publish "$B" refs/heads/main
+run_pre_push "refs/heads/main $C refs/heads/main aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+assert_status "objeto remoto ausente" 1 "$pre_status"
+assert_contains "mensagem de estado inconsistente" "estado inconsistente"
+side="$work/side"
+git init -q "$side"
+git -C "$side" config user.name "Tester"
+git -C "$side" config user.email "tester@example.com"
+git -C "$side" config commit.gpgsign false
+printf '%s\n' "x" > "$side/x.txt"
+git -C "$side" add x.txt
+git -C "$side" -c core.hooksPath="$empty_hooks" commit -q -m "feat: so no servidor"
+S=$(git -C "$side" rev-parse HEAD)
+git -c core.hooksPath="$empty_hooks" --git-dir="$bare" fetch -q "$side" "+${S}:refs/heads/other"
+run_pre_push "refs/heads/main $C refs/heads/main $B"
+assert_status "objeto anunciado ausente falha fechado" 1 "$pre_status"
+assert_contains "objeto anunciado explica a falha" "não está disponível localmente"
+
+# 13. Ref nova com SHA de 64 zeros não é erro quando o commit já está no servidor.
+reset_server
+publish "$C" refs/heads/main
+Z64=0000000000000000000000000000000000000000000000000000000000000000
+run_pre_push "refs/heads/feature $C refs/heads/feature $Z64"
+assert_status "zeros de 64 em branch nova publicada" 0 "$pre_status"
 
 cd "$repo"
 clean="$work/clean-msg.txt"
