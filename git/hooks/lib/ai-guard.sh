@@ -9,6 +9,7 @@
 #   ai_guard_coauthor_violations <text> any Co-Authored-By left over
 #   ai_guard_ident_violations          author/committer identity issues
 #   ai_guard_staged_ai_files           AI artifacts staged for commit
+#   ai_guard_push_commits ...          commits new to this push
 #   ai_guard_delegate <name> ...       chain to the repo's own hook
 #
 # Never modifies author/committer/identity — only blocks invalid ops.
@@ -146,6 +147,317 @@ EOF
 # dev-env's own repo gets it via 'dev-env init').
 ai_guard_artifacts_allowed() {
   [ "$(git config --bool ai-guard.allowartifacts 2>/dev/null)" = "true" ]
+}
+
+# ai_guard_redact_text <text>
+# Drops every URL userinfo, with or without a password, before printing.
+ai_guard_redact_text() {
+  printf '%s\n' "$1" | sed -E 's#(://)[^[:space:]/]*@#\1#g'
+}
+
+# ai_guard_batch_ssh
+# Transport for the publication query, in Git's order: GIT_SSH_COMMAND,
+# then core.sshCommand, then GIT_SSH, then ssh. Prints "command <line>" or
+# "program <executable>". OpenSSH gets BatchMode. A wrapper named by
+# GIT_SSH is kept as the program Git would run.
+ai_guard_batch_ssh() {
+  local cmd="" first="" rest="" mode=""
+  if [ -n "${GIT_SSH_COMMAND:-}" ]; then
+    cmd=$GIT_SSH_COMMAND
+    mode=command
+  else
+    cmd=$(git config --get core.sshCommand 2>/dev/null || true)
+    if [ -n "$cmd" ]; then
+      mode=command
+    elif [ -n "${GIT_SSH:-}" ]; then
+      cmd=$GIT_SSH
+      mode=program
+    else
+      cmd=ssh
+      mode=command
+    fi
+  fi
+  first=${cmd%% *}
+  rest=${cmd#"$first"}
+  case "$first" in
+    ssh|*/ssh) printf 'command %s\n' "$first -o BatchMode=yes$rest" ;;
+    *)
+      if [ "$mode" = program ]; then
+        printf 'program %s\n' "$cmd"
+      else
+        printf 'command %s\n' "$cmd"
+      fi
+      ;;
+  esac
+}
+
+# ai_guard_server_commits <url> <shafile>
+# Writes the commit SHA of every branch and tag the destination advertises.
+# Pull-request refs and other namespaces are ignored. A tag whose target
+# is a blob or a tree is not an exclusion. Local tracking refs are not
+# consulted. Returns 1 when the remote cannot be queried or an advertised
+# commit is not available locally. Advertised objects are classified in
+# one or two git cat-file --batch-check calls, after duplicate SHAs are
+# collapsed. The query does not prompt: terminal prompts and askpass are
+# disabled, and OpenSSH runs in BatchMode. A later removal on the server,
+# between this query and the actual update, is outside what a local hook
+# can close.
+ai_guard_server_commits() {
+  local url="$1" shafile="$2"
+  local err="" out="" sha="" ref="" commit="" target="" kind="" shown="" ssh_spec=""
+  local tmp="" result="" oid="" rest="" in_n="" out_n=""
+  local line1="" line2="" raw_name="" raw_type="" peel_name="" peel_type=""
+  : >"$shafile"
+  if [ -z "$url" ]; then
+    echo "estado inconsistente: URL do remoto ausente" >&2
+    return 1
+  fi
+  err=$(mktemp "${TMPDIR:-/tmp}/ai-guard-ls-remote-err.XXXXXX") || return 1
+  out=$(mktemp "${TMPDIR:-/tmp}/ai-guard-ls-remote-out.XXXXXX") || {
+    rm -f "$err"
+    return 1
+  }
+  ssh_spec=$(ai_guard_batch_ssh)
+  case "$ssh_spec" in
+    command\ *)
+      if ! GIT_TERMINAL_PROMPT=0 \
+          GIT_ASKPASS=false \
+          SSH_ASKPASS=false \
+          SSH_ASKPASS_REQUIRE=force \
+          GIT_SSH_COMMAND="${ssh_spec#command }" \
+          git ls-remote "$url" >"$out" 2>"$err"; then
+        shown=1
+      fi
+      ;;
+    program\ *)
+      if ! GIT_TERMINAL_PROMPT=0 \
+          GIT_ASKPASS=false \
+          SSH_ASKPASS=false \
+          SSH_ASKPASS_REQUIRE=force \
+          env -u GIT_SSH_COMMAND "GIT_SSH=${ssh_spec#program }" \
+          git ls-remote "$url" >"$out" 2>"$err"; then
+        shown=1
+      fi
+      ;;
+    *)
+      echo "estado inconsistente: comando SSH da consulta inválido" >&2
+      rm -f "$err" "$out"
+      return 1
+      ;;
+  esac
+  if [ "${shown:-}" = 1 ]; then
+    shown=$(ai_guard_redact_text "$url")
+    echo "estado inconsistente: não foi possível ler as refs do remoto (${shown})" >&2
+    ai_guard_redact_text "$(cat "$err")" >&2
+    rm -f "$err" "$out"
+    return 1
+  fi
+  tmp=$(mktemp -d "${TMPDIR:-/tmp}/ai-guard-advertised.XXXXXX") || {
+    rm -f "$err" "$out"
+    return 1
+  }
+  while IFS="$(printf '\t')" read -r sha ref; do
+    [ -n "$sha" ] || continue
+    case "$ref" in
+      refs/heads/*|refs/tags/*) ;;
+      *) continue ;;
+    esac
+    case "$sha" in
+      *[!0-9a-fA-F]*) continue ;;
+    esac
+    printf '%s\t%s\n' "$sha" "${ref:-ref}" >>"$tmp/refs"
+  done <"$out"
+  rm -f "$err" "$out"
+  if [ ! -s "$tmp/refs" ]; then
+    rm -rf "$tmp"
+    return 0
+  fi
+  sort -t "$(printf '\t')" -k1,1 -u "$tmp/refs" >"$tmp/unique"
+  awk -F "$(printf '\t')" '{ print $1 }' "$tmp/unique" >"$tmp/shas"
+  awk -F "$(printf '\t')" '{ printf "%s^{commit}\n", $1 }' "$tmp/unique" >"$tmp/peel-in"
+  if ! git cat-file --batch-check='%(objectname) %(objecttype) %(objectsize)' \
+      <"$tmp/peel-in" >"$tmp/peel-out" 2>/dev/null; then
+    echo "estado inconsistente: não foi possível classificar os objetos anunciados pelo remoto" >&2
+    rm -rf "$tmp"
+    return 1
+  fi
+  in_n=$(wc -l <"$tmp/peel-in" | tr -d '[:space:]')
+  out_n=$(wc -l <"$tmp/peel-out" | tr -d '[:space:]')
+  if [ "$in_n" != "$out_n" ]; then
+    echo "estado inconsistente: não foi possível classificar os objetos anunciados pelo remoto" >&2
+    rm -rf "$tmp"
+    return 1
+  fi
+  : >"$tmp/commits"
+  : >"$tmp/need"
+  while IFS="$(printf '\t')" read -r sha result; do
+    [ -n "${sha:-}" ] || continue
+    oid=${result%% *}
+    rest=${result#"$oid"}
+    rest=${rest# }
+    kind=${rest%% *}
+    case "$kind" in
+      commit)
+        printf '%s\n' "$oid" >>"$tmp/commits"
+        ;;
+      missing)
+        printf '%s\n' "$sha" >>"$tmp/need"
+        ;;
+      *)
+        echo "estado inconsistente: não foi possível classificar os objetos anunciados pelo remoto" >&2
+        rm -rf "$tmp"
+        return 1
+        ;;
+    esac
+  done < <(paste "$tmp/shas" "$tmp/peel-out")
+  if [ -s "$tmp/need" ]; then
+    while read -r sha; do
+      printf '%s\n%s^{}\n' "$sha" "$sha"
+    done <"$tmp/need" >"$tmp/class-in"
+    if ! git cat-file --batch-check='%(objectname) %(objecttype) %(objectsize)' \
+        <"$tmp/class-in" >"$tmp/class-out" 2>/dev/null; then
+      echo "estado inconsistente: não foi possível classificar os objetos anunciados pelo remoto" >&2
+      rm -rf "$tmp"
+      return 1
+    fi
+    in_n=$(wc -l <"$tmp/class-in" | tr -d '[:space:]')
+    out_n=$(wc -l <"$tmp/class-out" | tr -d '[:space:]')
+    if [ "$in_n" != "$out_n" ]; then
+      echo "estado inconsistente: não foi possível classificar os objetos anunciados pelo remoto" >&2
+      rm -rf "$tmp"
+      return 1
+    fi
+    exec 3<"$tmp/class-out"
+    while read -r sha; do
+      if ! IFS= read -r line1 <&3 || ! IFS= read -r line2 <&3; then
+        echo "estado inconsistente: não foi possível classificar os objetos anunciados pelo remoto" >&2
+        exec 3<&-
+        rm -rf "$tmp"
+        return 1
+      fi
+      raw_name=${line1%% *}
+      rest=${line1#"$raw_name"}
+      rest=${rest# }
+      raw_type=${rest%% *}
+      peel_name=${line2%% *}
+      rest=${line2#"$peel_name"}
+      rest=${rest# }
+      peel_type=${rest%% *}
+      case "$raw_type" in
+        blob|tree) ;;
+        commit)
+          printf '%s\n' "$raw_name" >>"$tmp/commits"
+          ;;
+        tag)
+          case "$peel_type" in
+            blob|tree) ;;
+            commit)
+              printf '%s\n' "$peel_name" >>"$tmp/commits"
+              ;;
+            *)
+              ref=$(awk -F "$(printf '\t')" -v s="$sha" '$1 == s { print $2; exit }' "$tmp/unique")
+              echo "estado inconsistente: o remoto anuncia ${ref:-ref} (${sha}) mas o commit não está disponível localmente" >&2
+              exec 3<&-
+              rm -rf "$tmp"
+              return 1
+              ;;
+          esac
+          ;;
+        *)
+          ref=$(awk -F "$(printf '\t')" -v s="$sha" '$1 == s { print $2; exit }' "$tmp/unique")
+          echo "estado inconsistente: o remoto anuncia ${ref:-ref} (${sha}) mas o commit não está disponível localmente" >&2
+          exec 3<&-
+          rm -rf "$tmp"
+          return 1
+          ;;
+      esac
+    done <"$tmp/need"
+    exec 3<&-
+  fi
+  sort -u "$tmp/commits" >"$shafile"
+  rm -rf "$tmp"
+  return 0
+}
+
+# ai_guard_stdin_shas <input> <shafile>
+# Records the remote SHA git passed for every update in this push, including
+# deletions. Those values describe the corresponding remote ref. An all-zero
+# SHA is a new ref and is not an exclusion.
+ai_guard_stdin_shas() {
+  local input="$1" shafile="$2"
+  local local_ref="" local_sha="" remote_ref="" remote_sha=""
+  : >"$shafile"
+  while read -r local_ref local_sha remote_ref remote_sha; do
+    [ -n "${local_sha:-}" ] || continue
+    case "$remote_sha" in
+      ''|*[!0]*)
+        [ -n "$remote_sha" ] && printf '%s\n' "$remote_sha" >>"$shafile"
+        ;;
+    esac
+  done <<EOF
+$input
+EOF
+}
+
+# ai_guard_push_commits <remote_name> <local_ref> <local_sha> <remote_ref> <remote_sha> <remote_url> <server_file> <auth_file>
+# Prints commits introduced by this ref update. A commit is new when it is
+# reachable from local_sha and not reachable from the remote SHAs of this
+# push, nor from the commits the destination advertised. A local tracking
+# ref is not publication. Returns 1, with no SHAs on stdout, when the range
+# cannot be determined.
+ai_guard_push_commits() {
+  local local_ref="$2" local_sha="$3" remote_sha="$5"
+  local server_file="${7:-}" auth_file="${8:-}"
+  local sha="" errfile="" outfile="" status=0
+  local -a exclude
+
+  case "$remote_sha" in
+    ''|*[!0]*) ;;
+    *) remote_sha="" ;;
+  esac
+  if [ -z "$server_file" ] || [ ! -f "$server_file" ]; then
+    echo "estado inconsistente: confirmação do remoto ausente para ${local_ref}" >&2
+    return 1
+  fi
+
+  errfile=$(mktemp "${TMPDIR:-/tmp}/ai-guard-push-err.XXXXXX") || return 1
+  outfile=$(mktemp "${TMPDIR:-/tmp}/ai-guard-push-out.XXXXXX") || {
+    rm -f "$errfile"
+    return 1
+  }
+
+  exclude=()
+  [ -n "$remote_sha" ] && exclude+=("$remote_sha")
+  if [ -n "$auth_file" ] && [ -f "$auth_file" ]; then
+    while IFS= read -r sha; do
+      [ -n "$sha" ] || continue
+      exclude+=("$sha")
+    done <"$auth_file"
+  fi
+  while IFS= read -r sha; do
+    [ -n "$sha" ] || continue
+    exclude+=("$sha")
+  done <"$server_file"
+
+  if [ "${#exclude[@]}" -eq 0 ]; then
+    git rev-list "$local_sha" >"$outfile" 2>"$errfile"
+  else
+    git rev-list "$local_sha" --not "${exclude[@]}" >"$outfile" 2>"$errfile"
+  fi
+  status=$?
+  if [ "$status" -ne 0 ]; then
+    if [ ! -s "$errfile" ]; then
+      echo "ref remota ausente ou estado inconsistente ao listar commits novos de ${local_ref}" >&2
+    else
+      cat "$errfile" >&2
+    fi
+    rm -f "$errfile" "$outfile"
+    return 1
+  fi
+
+  cat "$outfile"
+  rm -f "$errfile" "$outfile"
+  return 0
 }
 
 # ai_guard_delegate <hook-name> [args...]
