@@ -15,8 +15,9 @@
 # rev-list failure rejects the push. A tag that points at a blob or a tree
 # is not an exclusion. Offline network remotes therefore stop here; local
 # and SSH URLs work when ls-remote itself works. The query disables
-# terminal prompts and askpass, and runs OpenSSH in BatchMode, keeping the
-# configured ssh command. There remains a window between the query and the
+# terminal prompts and askpass, and runs OpenSSH in BatchMode. It keeps
+# the command Git would use: GIT_SSH_COMMAND, then core.sshCommand, then
+# GIT_SSH. There remains a window between the query and the
 # update. A
 # remote_sha of zeros is a new ref, not an error.
 # Then chains to the repository's own pre-push, re-feeding the original

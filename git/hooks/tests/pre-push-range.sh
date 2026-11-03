@@ -246,19 +246,59 @@ run_pre_push "refs/heads/feature $C refs/heads/feature $A" \
   "https://usuario:token-secreto@127.0.0.1:1/no.git"
 assert_status "URL com credencial falha fechado" 1 "$pre_status"
 assert_lacks "diagnostico omite a credencial" "token-secreto"
+run_pre_push "refs/heads/feature $C refs/heads/feature $A" \
+  "https://token-secreto@127.0.0.1:1/no.git"
+assert_status "URL com token sem senha falha fechado" 1 "$pre_status"
+assert_lacks "diagnostico omite token sem senha" "token-secreto"
+redacted=$(
+  # shellcheck source=/dev/null
+  . "$HOOK_DIR/lib/ai-guard.sh"
+  ai_guard_redact_text "https://token-secreto@h/a e https://outro-segredo@h/b"
+)
+case "$redacted" in
+  *token-secreto*|*outro-segredo*)
+    printf 'falhou redacao de todas as URLs: %s\n' "$redacted" >&2
+    exit 1
+    ;;
+esac
+printf 'ok redacao cobre todas as URLs da linha\n'
 git -C "$repo" config core.sshCommand "ssh -i /tmp/id_teste"
 ssh_got=$(
   cd "$repo"
+  unset GIT_SSH_COMMAND GIT_SSH
+  # shellcheck source=/dev/null
+  . "$HOOK_DIR/lib/ai-guard.sh"
+  ai_guard_batch_ssh
+)
+ssh_env=$(
+  cd "$repo"
+  GIT_SSH_COMMAND="ssh -i /tmp/env_key" GIT_SSH="/opt/wrapper/my-ssh"
   # shellcheck source=/dev/null
   . "$HOOK_DIR/lib/ai-guard.sh"
   ai_guard_batch_ssh
 )
 git -C "$repo" config --unset core.sshCommand
+ssh_prog=$(
+  cd "$repo"
+  unset GIT_SSH_COMMAND
+  GIT_SSH="/opt/wrapper/my-ssh"
+  # shellcheck source=/dev/null
+  . "$HOOK_DIR/lib/ai-guard.sh"
+  ai_guard_batch_ssh
+)
 case "$ssh_got" in
-  "ssh -o BatchMode=yes -i /tmp/id_teste") ;;
+  "command ssh -o BatchMode=yes -i /tmp/id_teste") ;;
   *) printf 'falhou ssh batch preserva o comando: %s\n' "$ssh_got" >&2; exit 1 ;;
 esac
-printf 'ok ssh batch preserva o comando\n'
+case "$ssh_env" in
+  "command ssh -o BatchMode=yes -i /tmp/env_key") ;;
+  *) printf 'falhou precedencia de GIT_SSH_COMMAND: %s\n' "$ssh_env" >&2; exit 1 ;;
+esac
+case "$ssh_prog" in
+  "program /opt/wrapper/my-ssh") ;;
+  *) printf 'falhou preservacao de GIT_SSH: %s\n' "$ssh_prog" >&2; exit 1 ;;
+esac
+printf 'ok ssh segue a precedencia do Git\n'
 
 # 12. SHA remoto inválido e objeto anunciado que não está local.
 reset_server

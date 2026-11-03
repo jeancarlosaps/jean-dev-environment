@@ -150,24 +150,44 @@ ai_guard_artifacts_allowed() {
 }
 
 # ai_guard_redact_text <text>
-# Drops userinfo (user:password@) from URLs before anything is printed.
+# Drops every URL userinfo, with or without a password, before printing.
 ai_guard_redact_text() {
-  printf '%s\n' "$1" | sed -E 's#(://)[^[:space:]/@]*:[^[:space:]/@]*@#\1#'
+  printf '%s\n' "$1" | sed -E 's#(://)[^[:space:]/]*@#\1#g'
 }
 
 # ai_guard_batch_ssh
-# SSH command for the publication query. Keeps core.sshCommand or
-# GIT_SSH_COMMAND and forces BatchMode on OpenSSH so the query cannot
-# wait for a password or a host prompt. Other wrappers are left intact.
+# Transport for the publication query, in Git's order: GIT_SSH_COMMAND,
+# then core.sshCommand, then GIT_SSH, then ssh. Prints "command <line>" or
+# "program <executable>". OpenSSH gets BatchMode. A wrapper named by
+# GIT_SSH is kept as the program Git would run.
 ai_guard_batch_ssh() {
-  local cmd="" first="" rest=""
-  cmd=$(git config --get core.sshCommand 2>/dev/null || true)
-  [ -n "$cmd" ] || cmd="${GIT_SSH_COMMAND:-ssh}"
+  local cmd="" first="" rest="" mode=""
+  if [ -n "${GIT_SSH_COMMAND:-}" ]; then
+    cmd=$GIT_SSH_COMMAND
+    mode=command
+  else
+    cmd=$(git config --get core.sshCommand 2>/dev/null || true)
+    if [ -n "$cmd" ]; then
+      mode=command
+    elif [ -n "${GIT_SSH:-}" ]; then
+      cmd=$GIT_SSH
+      mode=program
+    else
+      cmd=ssh
+      mode=command
+    fi
+  fi
   first=${cmd%% *}
   rest=${cmd#"$first"}
   case "$first" in
-    ssh|*/ssh) printf '%s\n' "$first -o BatchMode=yes$rest" ;;
-    *) printf '%s\n' "$cmd" ;;
+    ssh|*/ssh) printf 'command %s\n' "$first -o BatchMode=yes$rest" ;;
+    *)
+      if [ "$mode" = program ]; then
+        printf 'program %s\n' "$cmd"
+      else
+        printf 'command %s\n' "$cmd"
+      fi
+      ;;
   esac
 }
 
@@ -182,7 +202,7 @@ ai_guard_batch_ssh() {
 # outside what a local hook can close.
 ai_guard_server_commits() {
   local url="$1" shafile="$2"
-  local err="" out="" sha="" ref="" commit="" target="" kind="" shown=""
+  local err="" out="" sha="" ref="" commit="" target="" kind="" shown="" ssh_spec=""
   : >"$shafile"
   if [ -z "$url" ]; then
     echo "estado inconsistente: URL do remoto ausente" >&2
@@ -193,12 +213,35 @@ ai_guard_server_commits() {
     rm -f "$err"
     return 1
   }
-  if ! GIT_TERMINAL_PROMPT=0 \
-      GIT_ASKPASS=false \
-      SSH_ASKPASS=false \
-      SSH_ASKPASS_REQUIRE=force \
-      GIT_SSH_COMMAND="$(ai_guard_batch_ssh)" \
-      git ls-remote "$url" >"$out" 2>"$err"; then
+  ssh_spec=$(ai_guard_batch_ssh)
+  case "$ssh_spec" in
+    command\ *)
+      if ! GIT_TERMINAL_PROMPT=0 \
+          GIT_ASKPASS=false \
+          SSH_ASKPASS=false \
+          SSH_ASKPASS_REQUIRE=force \
+          GIT_SSH_COMMAND="${ssh_spec#command }" \
+          git ls-remote "$url" >"$out" 2>"$err"; then
+        shown=1
+      fi
+      ;;
+    program\ *)
+      if ! GIT_TERMINAL_PROMPT=0 \
+          GIT_ASKPASS=false \
+          SSH_ASKPASS=false \
+          SSH_ASKPASS_REQUIRE=force \
+          env -u GIT_SSH_COMMAND "GIT_SSH=${ssh_spec#program }" \
+          git ls-remote "$url" >"$out" 2>"$err"; then
+        shown=1
+      fi
+      ;;
+    *)
+      echo "estado inconsistente: comando SSH da consulta inválido" >&2
+      rm -f "$err" "$out"
+      return 1
+      ;;
+  esac
+  if [ "${shown:-}" = 1 ]; then
     shown=$(ai_guard_redact_text "$url")
     echo "estado inconsistente: não foi possível ler as refs do remoto (${shown})" >&2
     ai_guard_redact_text "$(cat "$err")" >&2
