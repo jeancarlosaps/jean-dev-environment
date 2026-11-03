@@ -262,6 +262,10 @@ git -c core.hooksPath="$empty_hooks" --git-dir="$bare" fetch -q "$side" "+${S}:r
 run_pre_push "refs/heads/main $C refs/heads/main $B"
 assert_status "objeto anunciado ausente falha fechado" 1 "$pre_status"
 assert_contains "objeto anunciado explica a falha" "não está disponível localmente"
+git --git-dir="$bare" update-ref -d refs/heads/other
+git -c core.hooksPath="$empty_hooks" --git-dir="$bare" fetch -q "$side" "+${S}:refs/pull/1/head"
+run_pre_push "refs/heads/main $C refs/heads/main $B"
+assert_status "ref de pull request nao bloqueia o push" 0 "$pre_status"
 
 # 13. Ref nova com SHA de 64 zeros não é erro quando o commit já está no servidor.
 reset_server

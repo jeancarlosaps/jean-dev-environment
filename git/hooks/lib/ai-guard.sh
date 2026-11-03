@@ -150,8 +150,9 @@ ai_guard_artifacts_allowed() {
 }
 
 # ai_guard_server_commits <url> <shafile>
-# Writes the commit SHA of every ref the destination currently advertises.
-# Local tracking refs, mirrors and tags are not consulted. Returns 1 when
+# Writes the commit SHA of every branch and tag the destination advertises.
+# Pull-request refs and other namespaces are ignored. Local tracking refs
+# are not consulted. Returns 1 when
 # the remote cannot be queried or an advertised commit is not available
 # locally. Does not prompt. A later removal on the server, between this
 # query and the actual update, is outside what a local hook can close.
@@ -176,6 +177,10 @@ ai_guard_server_commits() {
   fi
   while IFS="$(printf '\t')" read -r sha ref; do
     [ -n "$sha" ] || continue
+    case "$ref" in
+      refs/heads/*|refs/tags/*) ;;
+      *) continue ;;
+    esac
     case "$sha" in
       *[!0-9a-fA-F]*) continue ;;
     esac
