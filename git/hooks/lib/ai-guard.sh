@@ -149,16 +149,40 @@ ai_guard_artifacts_allowed() {
   [ "$(git config --bool ai-guard.allowartifacts 2>/dev/null)" = "true" ]
 }
 
+# ai_guard_redact_text <text>
+# Drops userinfo (user:password@) from URLs before anything is printed.
+ai_guard_redact_text() {
+  printf '%s\n' "$1" | sed -E 's#(://)[^[:space:]/@]*:[^[:space:]/@]*@#\1#'
+}
+
+# ai_guard_batch_ssh
+# SSH command for the publication query. Keeps core.sshCommand or
+# GIT_SSH_COMMAND and forces BatchMode on OpenSSH so the query cannot
+# wait for a password or a host prompt. Other wrappers are left intact.
+ai_guard_batch_ssh() {
+  local cmd="" first="" rest=""
+  cmd=$(git config --get core.sshCommand 2>/dev/null || true)
+  [ -n "$cmd" ] || cmd="${GIT_SSH_COMMAND:-ssh}"
+  first=${cmd%% *}
+  rest=${cmd#"$first"}
+  case "$first" in
+    ssh|*/ssh) printf '%s\n' "$first -o BatchMode=yes$rest" ;;
+    *) printf '%s\n' "$cmd" ;;
+  esac
+}
+
 # ai_guard_server_commits <url> <shafile>
 # Writes the commit SHA of every branch and tag the destination advertises.
-# Pull-request refs and other namespaces are ignored. Local tracking refs
-# are not consulted. Returns 1 when
-# the remote cannot be queried or an advertised commit is not available
-# locally. Does not prompt. A later removal on the server, between this
-# query and the actual update, is outside what a local hook can close.
+# Pull-request refs and other namespaces are ignored. A tag whose target
+# is a blob or a tree is not an exclusion. Local tracking refs are not
+# consulted. Returns 1 when the remote cannot be queried or an advertised
+# commit is not available locally. The query does not prompt: terminal
+# prompts and askpass are disabled, and OpenSSH runs in BatchMode. A later
+# removal on the server, between this query and the actual update, is
+# outside what a local hook can close.
 ai_guard_server_commits() {
   local url="$1" shafile="$2"
-  local err="" out="" sha="" ref="" commit=""
+  local err="" out="" sha="" ref="" commit="" target="" kind="" shown=""
   : >"$shafile"
   if [ -z "$url" ]; then
     echo "estado inconsistente: URL do remoto ausente" >&2
@@ -169,9 +193,15 @@ ai_guard_server_commits() {
     rm -f "$err"
     return 1
   }
-  if ! GIT_TERMINAL_PROMPT=0 git ls-remote "$url" >"$out" 2>"$err"; then
-    echo "estado inconsistente: não foi possível ler as refs do remoto (${url})" >&2
-    cat "$err" >&2
+  if ! GIT_TERMINAL_PROMPT=0 \
+      GIT_ASKPASS=false \
+      SSH_ASKPASS=false \
+      SSH_ASKPASS_REQUIRE=force \
+      GIT_SSH_COMMAND="$(ai_guard_batch_ssh)" \
+      git ls-remote "$url" >"$out" 2>"$err"; then
+    shown=$(ai_guard_redact_text "$url")
+    echo "estado inconsistente: não foi possível ler as refs do remoto (${shown})" >&2
+    ai_guard_redact_text "$(cat "$err")" >&2
     rm -f "$err" "$out"
     return 1
   fi
@@ -184,12 +214,42 @@ ai_guard_server_commits() {
     case "$sha" in
       *[!0-9a-fA-F]*) continue ;;
     esac
-    if ! commit=$(git rev-parse --verify --quiet "${sha}^{commit}"); then
+    if commit=$(git rev-parse --verify --quiet "${sha}^{commit}"); then
+      printf '%s\n' "$commit" >>"$shafile"
+      continue
+    fi
+    if ! git cat-file -e "$sha" >/dev/null 2>&1; then
       echo "estado inconsistente: o remoto anuncia ${ref:-ref} (${sha}) mas o commit não está disponível localmente" >&2
       rm -f "$err" "$out"
       return 1
     fi
-    printf '%s\n' "$commit" >>"$shafile"
+    target=$sha
+    while true; do
+      kind=$(git cat-file -t "$target" 2>/dev/null) || {
+        echo "estado inconsistente: o remoto anuncia ${ref:-ref} (${sha}) mas o commit não está disponível localmente" >&2
+        rm -f "$err" "$out"
+        return 1
+      }
+      [ "$kind" = tag ] || break
+      target=$(git rev-parse --verify --quiet "${target}^{}") || {
+        echo "estado inconsistente: o remoto anuncia ${ref:-ref} (${sha}) mas o commit não está disponível localmente" >&2
+        rm -f "$err" "$out"
+        return 1
+      }
+      if ! git cat-file -e "$target" >/dev/null 2>&1; then
+        echo "estado inconsistente: o remoto anuncia ${ref:-ref} (${sha}) mas o commit não está disponível localmente" >&2
+        rm -f "$err" "$out"
+        return 1
+      fi
+    done
+    case "$kind" in
+      blob|tree) ;;
+      *)
+        echo "estado inconsistente: o remoto anuncia ${ref:-ref} (${sha}) mas o commit não está disponível localmente" >&2
+        rm -f "$err" "$out"
+        return 1
+        ;;
+    esac
   done <"$out"
   rm -f "$err" "$out"
   return 0

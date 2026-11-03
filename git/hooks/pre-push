@@ -11,10 +11,13 @@
 # remote_ref/remote_sha), not from branch names or HEAD~1. Publication is
 # what this destination advertises (git ls-remote on the push URL) plus the
 # remote SHA of each update in this push. A local tracking ref, mirror, tag
-# or alias is not proof. Query failure, a missing advertised object, or a
-# rev-list failure rejects the push. Offline network remotes therefore stop
-# here; local and SSH URLs work when ls-remote itself works, without a
-# prompt. There remains a window between the query and the update. A
+# or alias is not proof. Query failure, a missing advertised commit, or a
+# rev-list failure rejects the push. A tag that points at a blob or a tree
+# is not an exclusion. Offline network remotes therefore stop here; local
+# and SSH URLs work when ls-remote itself works. The query disables
+# terminal prompts and askpass, and runs OpenSSH in BatchMode, keeping the
+# configured ssh command. There remains a window between the query and the
+# update. A
 # remote_sha of zeros is a new ref, not an error.
 # Then chains to the repository's own pre-push, re-feeding the original
 # stdin so corporate hooks see the exact same ref lines.

@@ -242,6 +242,23 @@ assert_status "caminho relativo le o servidor" 0 "$pre_status"
 run_pre_push "refs/heads/feature $C refs/heads/feature $A" "$work/ausente.git"
 assert_status "URL sem remoto falha fechado" 1 "$pre_status"
 assert_contains "URL sem remoto explica a falha" "não foi possível ler as refs do remoto"
+run_pre_push "refs/heads/feature $C refs/heads/feature $A" \
+  "https://usuario:token-secreto@127.0.0.1:1/no.git"
+assert_status "URL com credencial falha fechado" 1 "$pre_status"
+assert_lacks "diagnostico omite a credencial" "token-secreto"
+git -C "$repo" config core.sshCommand "ssh -i /tmp/id_teste"
+ssh_got=$(
+  cd "$repo"
+  # shellcheck source=/dev/null
+  . "$HOOK_DIR/lib/ai-guard.sh"
+  ai_guard_batch_ssh
+)
+git -C "$repo" config --unset core.sshCommand
+case "$ssh_got" in
+  "ssh -o BatchMode=yes -i /tmp/id_teste") ;;
+  *) printf 'falhou ssh batch preserva o comando: %s\n' "$ssh_got" >&2; exit 1 ;;
+esac
+printf 'ok ssh batch preserva o comando\n'
 
 # 12. SHA remoto inválido e objeto anunciado que não está local.
 reset_server
@@ -266,6 +283,11 @@ git --git-dir="$bare" update-ref -d refs/heads/other
 git -c core.hooksPath="$empty_hooks" --git-dir="$bare" fetch -q "$side" "+${S}:refs/pull/1/head"
 run_pre_push "refs/heads/main $C refs/heads/main $B"
 assert_status "ref de pull request nao bloqueia o push" 0 "$pre_status"
+blob=$(printf 'conteudo\n' | git -C "$repo" hash-object -w --stdin)
+printf 'conteudo\n' | git --git-dir="$bare" hash-object -w --stdin >/dev/null
+git --git-dir="$bare" update-ref refs/tags/blobtag "$blob"
+run_pre_push "refs/heads/main $C refs/heads/main $B"
+assert_status "tag de blob nao interrompe o push" 0 "$pre_status"
 
 # 13. Ref nova com SHA de 64 zeros não é erro quando o commit já está no servidor.
 reset_server
