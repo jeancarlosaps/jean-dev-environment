@@ -3,11 +3,15 @@
 # pre-push (AI guard) - global via core.hooksPath
 # ---------------------------------------------------------------------
 # Last line of defense before history leaves the machine. For every
-# commit about to be pushed, blocks when:
-#   - the message mentions an AI tool or still carries an AI trailer
-#     (commits made before the guard, rebases, cherry-picks...);
+# commit that this push would introduce, blocks when:
+#   - the message mentions an AI tool or still carries an AI trailer;
 #   - the message carries ANY Co-Authored-By (multiple authorship);
 #   - author or committer name/email matches an AI tool or bot.
+# The range comes from the stdin pairs (local_ref/local_sha and
+# remote_ref/remote_sha), not from branch names or HEAD~1. Commits already
+# reachable from another remote-tracking ref are published history and are
+# not judged again. A missing remote object or a rev-list failure rejects
+# the push. A remote_sha of zeros is a new ref, not an error.
 # Then chains to the repository's own pre-push, re-feeding the original
 # stdin so corporate hooks see the exact same ref lines.
 # Never rewrites anything. Args: $1 remote, $2 url. Stdin: ref pairs.
@@ -18,19 +22,32 @@ HOOK_DIR=$(cd -P "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)
 # shellcheck source=lib/ai-guard.sh
 . "$HOOK_DIR/lib/ai-guard.sh"
 
-ZERO=0000000000000000000000000000000000000000
 input=$(cat)
 
 if ! ai_guard_maintenance && [ -n "$input" ]; then
+  remote_name="${1:-}"
   bad=""
+  bad_state=""
   while read -r local_ref local_sha remote_ref remote_sha; do
     [ -n "${local_sha:-}" ] || continue
-    [ "$local_sha" = "$ZERO" ] && continue   # deleting a remote ref
-    if [ "$remote_sha" = "$ZERO" ]; then
-      range=$(git rev-list "$local_sha" --not --remotes 2>/dev/null)
-    else
-      range=$(git rev-list "$remote_sha..$local_sha" 2>/dev/null)
+    case "$local_sha" in
+      *[!0]*) ;;
+      *) continue ;;   # apagar a ref remota; zeros de 40 ou 64
+    esac
+    range_err=$(mktemp "${TMPDIR:-/tmp}/ai-guard-pre-push.XXXXXX") || {
+      bad_state="$bad_state
+  ${local_ref:-ref} -> ${remote_ref:-ref}: falha ao preparar a verificação"
+      continue
+    }
+    if ! range=$(ai_guard_push_commits "$remote_name" "$local_ref" "$local_sha" "$remote_ref" "$remote_sha" 2>"$range_err"); then
+      detail=$(cat "$range_err")
+      rm -f "$range_err"
+      [ -n "$detail" ] || detail="ref remota ausente ou estado inconsistente"
+      bad_state="$bad_state
+  ${local_ref} -> ${remote_ref}: ${detail}"
+      continue
     fi
+    rm -f "$range_err"
     for sha in $range; do
       msg=$(git log -1 --format=%B "$sha")
       ident=$(git log -1 --format='%an <%ae>%n%cn <%ce>' "$sha")
@@ -47,9 +64,18 @@ if ! ai_guard_maintenance && [ -n "$input" ]; then
   done <<EOF
 $input
 EOF
-  if [ -n "$bad" ]; then
+  if [ -n "$bad_state" ] || [ -n "$bad" ]; then
+    detail=""
+    if [ -n "$bad_state" ]; then
+      detail="${detail}
+estado inconsistente — o push foi interrompido, sem tratar o intervalo como vazio:${bad_state}"
+    fi
+    if [ -n "$bad" ]; then
+      detail="${detail}
+commits novos, ainda fora dos outros remotos conhecidos:${bad}"
+    fi
     ai_guard_block_message pre-push \
-      "commits inválidos no push (reescreva com rebase -i / amend)" "$bad"
+      "push interrompido; não reescreva commit que já está em algum remoto" "$detail"
     exit 1
   fi
 fi

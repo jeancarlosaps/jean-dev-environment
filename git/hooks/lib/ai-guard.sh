@@ -9,6 +9,7 @@
 #   ai_guard_coauthor_violations <text> any Co-Authored-By left over
 #   ai_guard_ident_violations          author/committer identity issues
 #   ai_guard_staged_ai_files           AI artifacts staged for commit
+#   ai_guard_push_commits ...          commits new to this push
 #   ai_guard_delegate <name> ...       chain to the repo's own hook
 #
 # Never modifies author/committer/identity — only blocks invalid ops.
@@ -146,6 +147,78 @@ EOF
 # dev-env's own repo gets it via 'dev-env init').
 ai_guard_artifacts_allowed() {
   [ "$(git config --bool ai-guard.allowartifacts 2>/dev/null)" = "true" ]
+}
+
+# ai_guard_push_commits <remote_name> <local_ref> <local_sha> <remote_ref> <remote_sha>
+# Prints commits introduced by this ref update. A commit is included only
+# when it is reachable from local_sha and not reachable from the remote_sha
+# received on stdin, nor from any other remote-tracking ref. The destination
+# remote-tracking ref (and a symbolic HEAD that points at it) is not an
+# exclusion: stdin remote_sha is the remote state of that ref. A remote_sha
+# made only of zeros means the destination ref does not exist yet.
+# Does not look at branch names beyond the ref pair, and does not use HEAD~1.
+# Returns 1, with no SHAs on stdout, when the range cannot be determined.
+ai_guard_push_commits() {
+  local remote_name="$1" local_ref="$2" local_sha="$3" remote_ref="$4" remote_sha="$5"
+  local suffix="" skip="" ref="" sha="" symref="" errfile="" outfile="" status=0
+  local -a exclude
+
+  case "$remote_sha" in
+    ''|*[!0]*) ;;
+    *) remote_sha="" ;;
+  esac
+
+  case "$remote_ref" in
+    refs/heads/*) suffix="${remote_ref#refs/heads/}" ;;
+    refs/tags/*) suffix="${remote_ref#refs/tags/}" ;;
+  esac
+  if [ -n "$remote_name" ] && [ -n "$suffix" ]; then
+    skip="refs/remotes/${remote_name}/${suffix}"
+  fi
+
+  errfile=$(mktemp "${TMPDIR:-/tmp}/ai-guard-push-err.XXXXXX") || return 1
+  outfile=$(mktemp "${TMPDIR:-/tmp}/ai-guard-push-out.XXXXXX") || {
+    rm -f "$errfile"
+    return 1
+  }
+
+  if ! git for-each-ref --format='%(refname) %(objectname) %(symref)' refs/remotes >"$outfile" 2>"$errfile"; then
+    echo "estado inconsistente: não foi possível ler as refs remotas conhecidas de ${local_ref}" >&2
+    cat "$errfile" >&2
+    rm -f "$errfile" "$outfile"
+    return 1
+  fi
+
+  exclude=()
+  [ -n "$remote_sha" ] && exclude+=("$remote_sha")
+  while read -r ref sha symref; do
+    [ -n "$ref" ] || continue
+    [ -n "$sha" ] || continue
+    [ -n "$skip" ] && [ "$ref" = "$skip" ] && continue
+    [ -n "$skip" ] && [ "$symref" = "$skip" ] && continue
+    exclude+=("$sha")
+  done <"$outfile"
+
+  : >"$errfile"
+  if [ "${#exclude[@]}" -eq 0 ]; then
+    git rev-list "$local_sha" >"$outfile" 2>"$errfile"
+  else
+    git rev-list "$local_sha" --not "${exclude[@]}" >"$outfile" 2>"$errfile"
+  fi
+  status=$?
+  if [ "$status" -ne 0 ]; then
+    if [ ! -s "$errfile" ]; then
+      echo "ref remota ausente ou estado inconsistente ao listar commits novos de ${local_ref}" >&2
+    else
+      cat "$errfile" >&2
+    fi
+    rm -f "$errfile" "$outfile"
+    return 1
+  fi
+
+  cat "$outfile"
+  rm -f "$errfile" "$outfile"
+  return 0
 }
 
 # ai_guard_delegate <hook-name> [args...]

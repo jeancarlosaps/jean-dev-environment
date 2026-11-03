@@ -327,7 +327,7 @@ flowchart TB
     PM --> CM["commit-msg<br/>bloqueia menção<br/>e coautoria"]
   end
   subgraph PUSH["git push"]
-    PP["pre-push<br/>revalida cada commit"] --> R[("remoto")]
+    PP["pre-push<br/>revalida commits novos"] --> R[("remoto")]
   end
   CM --> PP
   classDef hook fill:#1B1E24,stroke:#7FA2F2,color:#ECEFF4
@@ -343,7 +343,7 @@ flowchart TB
 | `pre-commit` | Bloqueia artefatos de IA staged (`.claude`, `CLAUDE.md`, `.cursor`, `AGENTS.md` e equivalentes) e identidade inválida: autor/committer de ferramenta ou bot, committer diferente do `user.name`/`user.email` configurado |
 | `prepare-commit-msg` | Remove trailers e assinaturas de IA da mensagem (cobre `-m`, templates, merges e squashes) |
 | `commit-msg` | Remove trailers restantes; bloqueia mensagem que ainda mencione ferramenta de IA e **qualquer** `Co-Authored-By` |
-| `pre-push` | Revalida cada commit a enviar (mensagem, trailers, coautoria, identidade) |
+| `pre-push` | Revalida só os commits novos da atualização recebida no stdin. Commit já alcançável por outra ref remota não é julgado de novo. Ref ausente ou `rev-list` com falha interrompe o push |
 
 - Nenhum hook reescreve autor ou committer: eles só bloqueiam.
 - Cada hook encadeia o hook do próprio repositório (`.git/hooks/<nome>`) quando existir. Os demais hooks padrão em `git/hooks/` são links para `lib/passthrough.sh`, que só delega — hooks corporativos continuam funcionando.

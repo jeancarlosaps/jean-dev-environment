@@ -9,6 +9,9 @@
 #   3. blocks ANY remaining Co-Authored-By (multiple authorship shows
 #      up on GitHub as "X and Y committed" — never by default);
 #   4. chains to the repository's own commit-msg if present.
+# Only the message file of the commit being created ($1) is examined.
+# Parent commits, HEAD and trailers already in history are not read, so a
+# new commit is not rejected because an ancestor carries Co-Authored-By.
 # Never touches author/committer. Args: $1 message file.
 # =====================================================================
 set -u
