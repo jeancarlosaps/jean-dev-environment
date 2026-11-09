@@ -1949,6 +1949,10 @@ Recomendação do review (não implementada):
 - Rollback floor: nenhuma versão implantada pode voltar a apagar identidades. Rollback abaixo desse piso só com cópia do banco e reinserção das linhas (`INSERT OR IGNORE`), que são imutáveis.
 - Abandono local só para estados em que o servidor já não pode criar pelo mesmo identificador (conflito, estado inválido). Abandono de estado desconhecido exige cerca no servidor (`void` que grava tombstone) ou é risco aceito explicitamente.
 
+## Ajustes posteriores
+
+Primeira publicação com banco persistente (SQLite em volume, uma réplica, processo único): backup antes da migração, ensaio em cópia e validação estão em [Railway com SQLite em volume — publicar commit exato, backup e migração](#railway-com-sqlite-em-volume--publicar-commit-exato-backup-e-migração).
+
 ## Lacunas
 
 - Topologia de deploy (processo único ou réplicas no mesmo volume) e comportamento de proxies que geram 4xx depois do commit.
@@ -1975,3 +1979,88 @@ Recomendação do review (não implementada):
 - RFC 9110 (semântica de métodos e idempotência)
 - Draft IETF `httpapi-idempotency-key-header`
 - SQLite: `BEGIN IMMEDIATE`, `PRAGMA synchronous`, `PRAGMA foreign_keys`
+
+---
+
+# Railway com SQLite em volume — publicar commit exato, backup e migração
+
+## Confidence
+
+🟢 **Validado em produção**
+
+- Uma publicação real: API Node + Fastify + `node:sqlite` com banco em volume persistente, migração de schema na abertura do banco, dados preservados e conferidos antes e depois.
+- Procedimento usado uma vez; as condições do serviço abaixo são as observadas nele, não regras gerais do Railway.
+
+## Contexto
+
+Publicar no Railway um commit já integrado em `dev` que adiciona coluna, tabela e índice único a um banco SQLite com pedidos reais, sem perder linhas e sem publicar outro commit por engano.
+
+Configuração observada do serviço: deploy a partir do repositório GitHub, uma réplica, healthcheck HTTP, volume montado no caminho do banco, nenhum deployment trigger ativo (auto-deploy desligado), `journal_mode = delete`.
+
+## Investigação
+
+| Observação | Evidência |
+|---|---|
+| O deployment ativo não era o último commit de `dev` | Metadados do deployment (`commitHash`) apontavam o commit anterior; `git log <ativo>..<alvo>` mostrou um único commit |
+| Squash em `dev` não roda CI | CI só em `pull_request`. A árvore do squash era idêntica à do head aprovado na PR (`git rev-parse <squash>^{tree} <head>^{tree}`) |
+| Redeploy reaproveita o commit do deployment anterior | Metadado `reason: redeploy` com o mesmo `commitHash` do deployment substituído |
+| Sem triggers, merge em `dev` não publica nada | Consulta `deploymentTriggers` do serviço vazia |
+| `serviceInstanceDeployV2(serviceId, environmentId, commitSha)` cria um deployment novo do commit informado | Deployment criado com `reason: deploy` e `commitHash` igual ao SHA pedido; status acompanhado até `SUCCESS` |
+| O rótulo de branch do deployment não identifica a versão | O deployment do commit de `dev` saiu rotulado com a branch configurada no serviço; só o `commitHash` confirma o conteúdo |
+| Node ausente no shell do Console | `node: command not found`, mas o processo da aplicação tinha o binário no `PATH` gerenciado pelo mise (`/proc/1/environ`); no serviço observado, `/mise/installs/node/24/bin` |
+| `node:sqlite` rejeita aspas duplas como literal de texto | `WHERE type = "table"` falhou com `SQL logic error`; com aspas simples, a consulta passou |
+| Download pela interface Files não gravou em disco no navegador do agente | Arquivo ausente na pasta de downloads; os bytes foram recuperados pelo mesmo canal autenticado da interface e conferidos por SHA-256 |
+| Backup consistente sem parar a aplicação | `VACUUM INTO '<novo-arquivo>'` no volume; SHA-256 igual no servidor e na cópia externa; `integrity_check` ok e `foreign_key_check` vazio nas duas |
+| Nenhuma gravação entre backup e deploy | SHA-256 do banco ativo igual antes do backup e imediatamente antes da publicação |
+| 8 de 162 testes falharam no Mac | Todos por timeout de 5 s em testes multiprocesso; com `--testTimeout=60000`, 162/162 |
+| Ensaio concorrente falhou no SSD externo | `database is locked` com 4 processos gravando; 40 ms por transação medidos no SSD; o mesmo ensaio no disco interno passou (31/31) |
+
+## Hipóteses descartadas
+
+- **Testes vermelhos indicam regressão:** descartado; só timeouts ambientais, todos passam com prazo maior, e a árvore publicada é a mesma aprovada na CI.
+- **Falha concorrente no SSD indica bug de numeração:** descartado; a transação que expira é desfeita, e o mesmo ensaio no disco interno numerou 130 pedidos sem duplicata nem lacuna.
+- **Redeploy publica o commit novo:** descartado; repete o commit do deployment de origem.
+- **`railway ssh` como canal de backup:** não usado; falhou na verificação de host key e aceitar a chave exigiria alterar `known_hosts` sem conferir a impressão digital. O Console web serviu.
+
+## Solução adotada
+
+1. Confirmar o commit-alvo: SHA, árvore igual à aprovada na CI, `git diff --stat <ativo> <alvo>` só com o escopo esperado, nenhuma PR aberta incluída.
+2. Confirmar serviço, ambiente, caminho do banco, réplicas, triggers, status do provedor e da origem (GitHub), healthcheck e espaço no volume.
+3. Inventário somente leitura do banco (abrir com `readOnly`): contagens, últimos registros, colunas, `integrity_check`, `foreign_key_check`.
+4. `VACUUM INTO` para um arquivo de nome único no volume; tornar o arquivo somente leitura; SHA-256 e tamanho no servidor.
+5. Exportar pela interface Files; validar SHA-256 local contra o servidor; repetir `integrity_check` e `foreign_key_check` na cópia; guardar fora do provedor.
+6. Ensaiar a migração com o build do commit-alvo numa cópia descartável: dados preservados, numeração esperada, reabertura estável, gravação nova, replay idempotente, concorrência e integridade. O backup original continua com o mesmo SHA-256.
+7. Imediatamente antes do deploy, conferir que o SHA-256 do banco ativo não mudou. Se mudou, refazer o backup.
+8. Publicar com `serviceInstanceDeployV2` e o SHA exato; acompanhar até `SUCCESS`; conferir `commitHash`.
+9. Validar: healthcheck, rotas protegidas sem token, leitura autenticada comparada com o snapshot anterior, logs da subida, banco por consultas somente leitura no contêiner novo (hostname diferente do anterior).
+10. Manter o backup no volume e a cópia externa depois da publicação.
+
+## Lacunas
+
+- Abertura simultânea, por vários processos, de um banco ainda não migrado: o probe local ficou inconclusivo. O serviço observado tem uma réplica, então o caso não ocorreu.
+- Backup nativo do volume: relatado como indisponível no plano Trial usado; não conferido nesta investigação.
+- Impressão digital da host key do `railway ssh` não verificada.
+
+## Lições aprendidas
+
+1. CI verde na PR não prova o que está em produção: conferir o `commitHash` do deployment ativo e comparar a árvore do squash com a do head aprovado.
+2. Merge, deployment novo e Redeploy são operações diferentes. Sem triggers, merge não publica; Redeploy repete um commit antigo; só um deploy com SHA explícito publica uma versão determinada.
+3. O shell interativo do Console pode ter `PATH` diferente do processo da aplicação. Procurar o binário (`/proc/1/environ`, `ls` do gerenciador de versões) antes de concluir que falta, e exportar o `PATH` só naquela sessão.
+4. Em SQL, texto literal usa aspas simples e aspas duplas são identificadores. Corrigir a consulta; não afrouxar a configuração do banco para aceitar o erro.
+5. Para scripts no Console, gravar o arquivo com heredoc entre aspas (`<<'EOF'`): evita escape de aspas na linha de comando. Nunca passar credencial como argumento.
+6. Backup antes de migração: `VACUUM INTO`, nunca cópia do arquivo ativo; validar por SHA-256, `integrity_check` e `foreign_key_check` no servidor e na cópia externa.
+7. Rollback de código não restaura dados. Restaurar um backup antigo sobre o banco novo apaga o que foi gravado depois; avaliar perdas antes.
+8. Timeout em ambiente lento não é regressão até ser reproduzido com prazo adequado ou em outro disco. No SSD externo observado, a latência por transação bastou para estourar o `busy_timeout` em testes SQLite multiprocesso. A área de rascunho continua valendo (`AGENTS.md`, "Armazenamento local"); só esse ensaio, de poucos KB, foi repetido no disco interno para separar ambiente de código.
+9. Se o navegador do agente não grava o download, recuperar os bytes pelo mesmo canal autenticado da interface, sem contornar controles, e aceitar o arquivo só depois de conferir o SHA-256 com o servidor.
+
+## Recomendações futuras
+
+- Documentar no repositório do serviço o comando de publicação por SHA e o checklist acima.
+- Registrar no relatório de deploy o SHA publicado, o ID do deployment e o SHA-256 do backup.
+
+## Referências
+
+- [Idempotência de criação: a identidade não expira, só o cache](#idempotência-de-criação-a-identidade-não-expira-só-o-cache)
+- [Automação bem-sucedida não prova resultado correto](#automação-bem-sucedida-não-prova-resultado-correto)
+- SQLite: `VACUUM INTO`, `PRAGMA integrity_check`, `PRAGMA foreign_key_check`, aspas em literais e identificadores
+- API GraphQL pública do Railway: `serviceInstanceDeployV2`, `deploymentTriggers`
