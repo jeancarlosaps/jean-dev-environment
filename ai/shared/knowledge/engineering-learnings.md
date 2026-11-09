@@ -1833,7 +1833,7 @@ CI: GitHub Actions `macos-26` com o mesmo Xcode e a mesma versão do CocoaPods. 
 
 ---
 
-# Xcode — controle de artefatos de build e simuladores de teste
+# Armazenamento local no macOS — artefatos de build, simuladores e caches de agentes
 
 ## Confidence
 
@@ -1872,6 +1872,21 @@ Agentes executando builds e testes iOS repetidamente no macOS (Xcode 26.5, simul
 - Remoção de clones e simuladores indisponíveis pelo `simctl`, preservando runtimes e simuladores em uso.
 - Rodadas locais em série no simulador existente, com a CI como validação principal.
 
+## Ajustes posteriores
+
+Segundo incidente (Xcode 27.2, runtimes iOS 26.5 e 27.2): o disco chegou a 0 livre (`ENOSPC`) e nem comandos de shell rodavam. Medições com `df` antes e depois de cada passo.
+
+| Observação | Evidência |
+|---|---|
+| Runtime de simulador sem uso | Nenhum dispositivo do runtime tinha sido iniciado (`xcrun simctl runtime list -v` sem `Last Used At`). `xcrun simctl runtime delete <id>` liberou 7,9 GB no `df`; o outro runtime e o simulador em uso seguiram intactos |
+| Runtimes ficam fora de `~/Library` | Imagens em `/System/Library/AssetsV2/com_apple_MobileAsset_iOSSimulatorRuntime`, montadas como volumes somente leitura. Não aparecem no `du` da pasta do usuário |
+| Montagem virtual do CoreDevice | `~/Library/Developer/CoreDevice/DeviceFS` é um sistema de arquivos `devicefs` do aparelho conectado. O `du` contou 29 GB ali sem ocupar o disco; `du -x` e `mount` confirmam |
+| Cache de editor por versão | O editor baseado em VS Code mantinha 13 diretórios em `CachedData`, um por versão instalada; só o da versão atual (`commit` em `product.json`) estava em uso. Remover os antigos e logs de sessões encerradas, com o editor aberto, liberou cerca de 0,5 GB |
+| Caches de agentes em uso | Runtime de agente (~1,6 GB) e imagem de VM de agente (~11 GB) eram atuais e estavam em uso; nada descartável. Sem mecanismo oficial de limpeza para a VM |
+| Diferença entre `df` e `du` | Cerca de 75 GB usados não apareceram no `du` sem privilégio (áreas protegidas pelo macOS). Sem snapshots locais (`tmutil listlocalsnapshots /`) e com espaço purgável desprezível |
+
+Decisões: área de rascunho opcional por agente, configurada por `DEV_SCRATCH_DIR` (na máquina do incidente, um SSD externo), e regra de espaço no `AGENTS.md` ("Armazenamento local"). Os limites de 15, 10 e 5 GiB são a referência dessa máquina, não um requisito.
+
 ## Lacunas
 
 - Não medido quanto do espaço físico dos simuladores é compartilhado com o runtime.
@@ -1879,7 +1894,7 @@ Agentes executando builds e testes iOS repetidamente no macOS (Xcode 26.5, simul
 
 ## Lições aprendidas
 
-1. Verificar o espaço livre (`df`) antes de build ou testes; mirar uma margem operacional de 20 GiB sempre que possível.
+1. Verificar o espaço livre (`df`) antes de build ou testes; a margem e os limites estão no `AGENTS.md` ("Armazenamento local").
 2. Medir o efeito de uma limpeza com `df` antes e depois; o `du` superestima diretórios com clones APFS.
 3. Reutilizar um DerivedData por projeto ou tarefa, em vez de criar um diretório novo a cada execução.
 4. Evitar testes paralelos e clonagem de simuladores sem necessidade real; preferir o simulador já disponível.
@@ -1891,6 +1906,9 @@ Agentes executando builds e testes iOS repetidamente no macOS (Xcode 26.5, simul
 10. Não apagar preferências, sessões, históricos ou projetos do usuário.
 11. Em falha ambiental (por exemplo, clonagem de simulador), diagnosticar a causa antes de repetir builds.
 12. Não criar automações de limpeza sem necessidade comprovada.
+13. Antes de culpar um diretório, conferir se é montagem (`mount`, `du -x`); antes de concluir que há espaço escondido, verificar snapshots locais e espaço purgável.
+14. Remover runtimes de simulador só pelo `simctl runtime delete`, depois de confirmar que nenhum dispositivo dele está em uso.
+15. Em caches de editor e agentes, remover apenas o que pertence a versões ou sessões encerradas, sem fechar a ferramenta de outro agente.
 
 ## Recomendações futuras
 
