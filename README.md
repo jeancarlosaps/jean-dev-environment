@@ -303,6 +303,16 @@ machine:                        # aplicado pelo `dev-env init`, uma vez por máq
 
 Novo perfil = novas linhas no manifesto (com `extends` quando fizer sentido). O perfil usado por cada projeto fica gravado no registro, então `doctor --all` aplica o perfil certo automaticamente.
 
+### Área de rascunho (opcional)
+
+`DEV_SCRATCH_DIR` aponta para um diretório onde agentes podem colocar ensaios, clones descartáveis e artefatos de build, cada um em `$DEV_SCRATCH_DIR/<agente>/` (regra em `AGENTS.md`, "Armazenamento local"). Útil quando o disco do sistema tem pouco espaço, por exemplo com um volume externo.
+
+```bash
+export DEV_SCRATCH_DIR="<caminho-com-espaço-livre>"
+```
+
+Defina no arquivo de inicialização do seu shell, com o caminho da sua máquina. Nenhum comando do `dev-env` lê essa variável. Sem ela, ou com o volume desconectado, os agentes usam os caminhos padrão das ferramentas.
+
 <a id="ai-guard"></a>
 
 ## 07 · Segurança e hooks
