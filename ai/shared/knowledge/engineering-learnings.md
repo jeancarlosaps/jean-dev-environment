@@ -2011,7 +2011,9 @@ Configuração observada do serviço: deploy a partir do repositório GitHub, um
 | `node:sqlite` rejeita aspas duplas como literal de texto | `WHERE type = "table"` falhou com `SQL logic error`; com aspas simples, a consulta passou |
 | Download pela interface Files não gravou em disco no navegador do agente | Arquivo ausente na pasta de downloads; os bytes foram recuperados pelo mesmo canal autenticado da interface e conferidos por SHA-256 |
 | Backup consistente sem parar a aplicação | `VACUUM INTO '<novo-arquivo>'` no volume; SHA-256 igual no servidor e na cópia externa; `integrity_check` ok e `foreign_key_check` vazio nas duas |
-| Nenhuma gravação entre backup e deploy | SHA-256 do banco ativo igual antes do backup e imediatamente antes da publicação |
+| Nenhuma gravação entre o backup e a última conferência | SHA-256 do banco ativo igual no backup e na conferência feita cerca de 35 s antes de disparar o deploy. A igualdade cobre só até esse instante |
+| A versão anterior continuou aceitando escritas até a troca de contêiner | O contêiner novo subiu cerca de 5 min depois do disparo; não houve bloqueio de escrita nesse intervalo |
+| Nenhuma escrita foi perdida nesta publicação | Depois da migração, os cinco pedidos, seus IDs e os campos comparados (mesa, status, total, itens) eram iguais aos do backup. Constatação deste caso, não garantia geral |
 | 8 de 162 testes falharam no Mac | Todos por timeout de 5 s em testes multiprocesso; com `--testTimeout=60000`, 162/162 |
 | Ensaio concorrente falhou no SSD externo | `database is locked` com 4 processos gravando; 40 ms por transação medidos no SSD; o mesmo ensaio no disco interno passou (31/31) |
 
@@ -2030,13 +2032,14 @@ Configuração observada do serviço: deploy a partir do repositório GitHub, um
 4. `VACUUM INTO` para um arquivo de nome único no volume; tornar o arquivo somente leitura; SHA-256 e tamanho no servidor.
 5. Exportar pela interface Files; validar SHA-256 local contra o servidor; repetir `integrity_check` e `foreign_key_check` na cópia; guardar fora do provedor.
 6. Ensaiar a migração com o build do commit-alvo numa cópia descartável: dados preservados, numeração esperada, reabertura estável, gravação nova, replay idempotente, concorrência e integridade. O backup original continua com o mesmo SHA-256.
-7. Imediatamente antes do deploy, conferir que o SHA-256 do banco ativo não mudou. Se mudou, refazer o backup.
+7. Imediatamente antes do deploy, conferir que o SHA-256 do banco ativo não mudou. Se mudou, refazer o backup. A conferência vale só até aquele instante: a versão anterior continua aceitando escritas até a troca de contêiner. Depois da migração, comparar contagem, IDs e campos com o backup. Garantir que nada mudou em toda a janela exige bloquear novas escritas e aguardar o fim das operações em andamento antes do backup final.
 8. Publicar com `serviceInstanceDeployV2` e o SHA exato; acompanhar até `SUCCESS`; conferir `commitHash`.
 9. Validar: healthcheck, rotas protegidas sem token, leitura autenticada comparada com o snapshot anterior, logs da subida, banco por consultas somente leitura no contêiner novo (hostname diferente do anterior).
 10. Manter o backup no volume e a cópia externa depois da publicação.
 
 ## Lacunas
 
+- Janela entre a última conferência do banco e a troca de contêiner, sem bloqueio de escrita: escritas nesse intervalo não estariam no backup. Nesta publicação, a comparação posterior não encontrou nenhuma; futuras migrações precisam de bloqueio de escrita ou de uma conferência pós-migração contra o backup.
 - Abertura simultânea, por vários processos, de um banco ainda não migrado: o probe local ficou inconclusivo. O serviço observado tem uma réplica, então o caso não ocorreu.
 - Backup nativo do volume: relatado como indisponível no plano Trial usado; não conferido nesta investigação.
 - Impressão digital da host key do `railway ssh` não verificada.
