@@ -305,13 +305,30 @@ Novo perfil = novas linhas no manifesto (com `extends` quando fizer sentido). O 
 
 ### Área de rascunho (opcional)
 
-`DEV_SCRATCH_DIR` aponta para um diretório onde agentes podem colocar ensaios, clones descartáveis e artefatos de build, cada um em `$DEV_SCRATCH_DIR/<agente>/` (regra em `AGENTS.md`, "Armazenamento local"). Útil quando o disco do sistema tem pouco espaço, por exemplo com um volume externo.
+`DEV_SCRATCH_DIR` aponta para um diretório de ensaios, clones
+descartáveis e artefatos de build em `$DEV_SCRATCH_DIR/<agente>/`
+(regra em `AGENTS.md`, "Armazenamento local e Git Worktrees").
+Útil quando o disco do sistema tem pouco espaço.
 
 ```bash
 export DEV_SCRATCH_DIR="<caminho-com-espaço-livre>"
 ```
 
-Defina no arquivo de inicialização do seu shell, com o caminho da sua máquina. Nenhum comando do `dev-env` lê essa variável. Sem ela, ou com o volume desconectado, os agentes usam os caminhos padrão das ferramentas.
+Defina no arquivo de inicialização do shell. Nenhum comando do
+`dev-env` lê essa variável. Sem ela, ou com o volume desconectado,
+valem os caminhos padrão das ferramentas.
+
+Política de worktrees e alertas:
+[`ai/shared/docs/worktrees-and-storage.md`](ai/shared/docs/worktrees-and-storage.md).
+
+Diagnóstico somente leitura:
+
+```bash
+./scripts/storage-audit.sh [caminho-do-repositório]
+```
+
+Limites opcionais: `DEV_STORAGE_OK_GIB` (20),
+`DEV_STORAGE_WARN_GIB` (10), `DEV_STORAGE_CRIT_GIB`.
 
 <a id="ai-guard"></a>
 
