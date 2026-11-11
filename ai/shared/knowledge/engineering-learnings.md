@@ -1885,16 +1885,37 @@ Segundo incidente (Xcode 27.2, runtimes iOS 26.5 e 27.2): o disco chegou a 0 liv
 | Caches de agentes em uso | Runtime de agente (~1,6 GB) e imagem de VM de agente (~11 GB) eram atuais e estavam em uso; nada descartável. Sem mecanismo oficial de limpeza para a VM |
 | Diferença entre `df` e `du` | Cerca de 75 GB usados não apareceram no `du` sem privilégio (áreas protegidas pelo macOS). Sem snapshots locais (`tmutil listlocalsnapshots /`) e com espaço purgável desprezível |
 
-Decisões: área de rascunho opcional por agente, configurada por `DEV_SCRATCH_DIR` (na máquina do incidente, um SSD externo), e regra de espaço no `AGENTS.md` ("Armazenamento local"). Os limites de 15, 10 e 5 GiB são a referência dessa máquina, não um requisito.
+Decisões: área de rascunho opcional por agente, configurada por `DEV_SCRATCH_DIR` (na máquina do incidente, um SSD externo), e regra de espaço no `AGENTS.md`. Os limites numéricos passaram a ser personalizáveis; ver política atual em `ai/shared/docs/worktrees-and-storage.md`.
+
+## Ajustes posteriores (terceiro incidente)
+
+Em outra máquina macOS com SSD interno pequeno (~228 GiB) e volume externo APFS quase vazio, o espaço livre ficou em torno de 11–12 GiB (estado de atenção). Medições com `df` e inventário por categoria:
+
+| Observação | Evidência |
+|---|---|
+| Imagem de VM de agente de desktop | ~11 GiB em pacote de VM local; processo do app ausente no momento da auditoria; remoção exige autorização (pode ser recriada, mas é pesada) |
+| Base de estado do editor | Banco `state.vscdb` na casa de ~2,5 GiB; sensível — não limpar com o editor aberto |
+| Dois simuladores iOS com dados densos | ~4,9 GiB e ~4,5 GiB; demais dispositivos ~17 MiB cada; `simctl delete unavailable` quase não alterou o `df` |
+| Worktrees de um app Flutter | Vários checkouts no volume externo para PRs já mergeados, working trees limpas; um ainda tinha worker de agente ativo — PR mergeado ≠ checkout descartável |
+| `DEV_SCRATCH_DIR` ausente | Volume externo com pasta de rascunho já criada, mas a variável não estava no shell; builds Flutter grandes ainda caíam no SSD interno |
+| Artefatos reconstruíveis no disco interno | Diretório `build/` de um checkout Flutter (~0,6 GiB) e logs antigos de editor/agente; remoção por caminho exato elevou o livre de ~11 para ~12 GiB |
+
+Decisões: política proprietária de worktrees e armazenamento (`ai/shared/docs/worktrees-and-storage.md`); limites padrão 20 / 10 GiB via `DEV_STORAGE_*`; script somente leitura `scripts/storage-audit.sh`; reutilização obrigatória de checkout em tarefas sequenciais.
 
 ## Lacunas
 
 - Não medido quanto do espaço físico dos simuladores é compartilhado com o runtime.
 - A liberação de blocos no APFS pode ser assíncrona; medições foram feitas segundos após cada remoção.
+- Claude Desktop (3.6556.1+): a documentação oficial aponta
+  Settings → This computer → System → Manage Storage (ou `/storage`)
+  para limpar sessões inativas no dispositivo. Não há procedimento
+  oficial documentado para apagar seletivamente `rootfs.img` /
+  `sessiondata.img` em `vm_bundles/`; preservar esses arquivos até
+  haver guia oficial inequívoco ou autorização explícita.
 
 ## Lições aprendidas
 
-1. Verificar o espaço livre (`df`) antes de build ou testes; a margem e os limites estão no `AGENTS.md` ("Armazenamento local").
+1. Verificar o espaço livre (`df`) antes de build ou testes; a margem e os limites estão no `AGENTS.md` e em `ai/shared/docs/worktrees-and-storage.md`.
 2. Medir o efeito de uma limpeza com `df` antes e depois; o `du` superestima diretórios com clones APFS.
 3. Reutilizar um DerivedData por projeto ou tarefa, em vez de criar um diretório novo a cada execução.
 4. Evitar testes paralelos e clonagem de simuladores sem necessidade real; preferir o simulador já disponível.
@@ -1909,11 +1930,15 @@ Decisões: área de rascunho opcional por agente, configurada por `DEV_SCRATCH_D
 13. Antes de culpar um diretório, conferir se é montagem (`mount`, `du -x`); antes de concluir que há espaço escondido, verificar snapshots locais e espaço purgável.
 14. Remover runtimes de simulador só pelo `simctl runtime delete`, depois de confirmar que nenhum dispositivo dele está em uso.
 15. Em caches de editor e agentes, remover apenas o que pertence a versões ou sessões encerradas, sem fechar a ferramenta de outro agente.
+16. Tarefa sequencial reutiliza o checkout; worktree extra só com paralelismo ou isolamento real.
+17. PR mergeado não autoriza remoção automática de worktree: conferir processo ativo, alterações e commits exclusivos.
+18. Volume externo com pasta de rascunho só ajuda se `DEV_SCRATCH_DIR` estiver definida e o comando apontar caminhos explícitos para lá.
 
 ## Recomendações futuras
 
 - Ao planejar uma tarefa com builds iOS, incluir a verificação de espaço e o destino dos artefatos no próprio plano.
 - Reavaliar estas regras se o Xcode mudar a forma de clonar simuladores para testes paralelos.
+- Rodar `scripts/storage-audit.sh` no repositório ativo antes de criar worktrees em máquinas com pouco disco.
 
 ## Referências
 

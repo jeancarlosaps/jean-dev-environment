@@ -268,29 +268,43 @@ completa** quando a mudança tocar infraestrutura ou componente
 compartilhado. Nenhuma entrega está pronta com build, lint ou testes
 vermelhos.
 
-### Armazenamento local
+### Armazenamento local e Git Worktrees
 
-Vale antes de clones, instalações, builds, testes, downloads grandes e
-outras operações intensivas de I/O, em qualquer sistema operacional.
-Evidências e comandos do macOS: `ai/shared/knowledge/engineering-learnings.md`
-("Armazenamento local no macOS — artefatos de build, simuladores e
-caches de agentes").
+Política completa (ciclo de vida, classificação, alertas, remoção
+segura e script de diagnóstico):
+`ai/shared/docs/worktrees-and-storage.md`.
+
+Evidências e particularidades do macOS/APFS:
+`ai/shared/knowledge/engineering-learnings.md` ("Armazenamento local no
+macOS — artefatos de build, simuladores e caches de agentes").
+
+Vale antes de clones, instalações, builds, testes, downloads grandes,
+criação de worktrees e outras operações intensivas de I/O, em qualquer
+sistema operacional.
 
 - Verificar o espaço livre do volume que vai receber os dados
-  (`df -h <caminho>` no macOS e no Linux; `Get-PSDrive` no Windows).
-  Medir o efeito de qualquer limpeza antes e depois.
-- Não encher o volume do sistema. Se o espaço livre não cobrir a
-  operação com folga, avisar o risco antes de continuar; se não cobrir a
-  operação, não iniciá-la. A margem depende da máquina e da carga. Como
-  referência, o ambiente de origem usa 15 GiB desejados, aviso abaixo de
-  10 GiB e nenhuma operação volumosa abaixo de 5 GiB.
+  (`df -h <caminho>` / `df -g` no macOS e no Linux; `Get-PSDrive` no
+  Windows). Medir o efeito de qualquer limpeza antes e depois.
+- Limites personalizáveis via `DEV_STORAGE_OK_GIB` (padrão 20),
+  `DEV_STORAGE_WARN_GIB` (padrão 10) e `DEV_STORAGE_CRIT_GIB` (padrão
+  igual ao de atenção). Acima do desejado: operação permitida. Entre
+  atenção e desejado: alertar antes de builds ou novos worktrees.
+  Abaixo do crítico: suspender operações volumosas e pedir autorização.
+  Não criar daemon nem limpeza automática ao cruzar os limites.
+- **Uma tarefa sequencial reutiliza o checkout existente.** Worktree
+  adicional só para paralelismo real ou isolamento técnico comprovado.
+  Antes de criar: inventariar checkouts, alterações e processos; só
+  então justificar a criação. Não criar worktree automático para review,
+  continuação de PR, bugfix da mesma tarefa, testes, investigação ou
+  documentação. Detalhes e ciclo de vida: o documento proprietário.
 - Área de rascunho opcional: se `DEV_SCRATCH_DIR` estiver definida e o
   caminho existir e aceitar escrita, usar `$DEV_SCRATCH_DIR/<agente>/`
   para ensaios, clones descartáveis e artefatos de build, sempre por
   caminho explícito no próprio comando (`git worktree add <caminho>`,
   `-derivedDataPath`, variável de cache no comando). Sem a variável, ou
   com o volume ausente, usar os caminhos padrão das ferramentas e seguir
-  a regra de espaço acima; nunca falhar por isso.
+  a regra de espaço acima; nunca falhar por isso. Não criar uma segunda
+  estratégia concorrente de armazenamento temporário.
 - Não mover projetos existentes, não alterar configuração global de
   ferramentas e não mudar permissões para usar outro volume.
 - Reutilizar worktrees, dependências e instalações existentes. Clone
@@ -298,10 +312,13 @@ caches de agentes").
   justificativa.
 - Ao concluir a tarefa, remover os artefatos temporários criados por ela,
   por caminho exato, e citar no relatório o que foi mantido. Sem
-  automação de limpeza e sem `rm -rf` genérico.
+  automação de limpeza e sem `rm -rf` genérico. Não remover worktree só
+  porque o PR foi mergeado; nunca `git worktree remove --force`.
 - Nunca apagar, mover ou alterar, para liberar espaço, arquivos de outro
   agente ou worktree, arquivos pessoais, caches em uso ou dados de
   simuladores e emuladores sem autorização.
+- Diagnóstico somente leitura: `scripts/storage-audit.sh`
+  `[caminho-do-repositório]`.
 
 ## Code review técnico
 
