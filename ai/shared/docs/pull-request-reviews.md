@@ -102,10 +102,12 @@ Não declarar sucesso só pelo retorno do comando de escrita.
 | Status | Quando usar |
 |---|---|
 | `READY` | Código publicado; testes ok; CI obrigatório verde (se existir); feedback tratado; respostas publicadas; threads resolvidas quando apropriado; restantes justificadas; reviews obrigatórios satisfeitos; HEAD e base confirmados; sem finding bloqueante |
-| `AWAITING_REVIEW` | Trabalho técnico feito e feedback tratado na medida do possível; falta revisão humana ou re-review |
-| `BLOCKED` | Comentário pendente de tratamento, resposta não publicada, thread bloqueante aberta, CI obrigatório falhando, ou review obrigatório ainda não satisfeito |
+| `AWAITING_REVIEW` | Trabalho do nosso lado concluído (código, validações e feedback já tratado); falta apenas revisão humana, aprovação obrigatória ou re-review |
+| `BLOCKED` | Pendência acionável ainda nossa: comentário sem tratamento, resposta não publicada, thread bloqueante aberta, CI obrigatório falhando, ou `CHANGES_REQUESTED` / finding técnico ainda não atendido |
 
-Um PR **não** fica `READY` apenas porque o código foi enviado.
+Não use `BLOCKED` só porque a aprovação obrigatória ainda não chegou —
+nesse caso o status é `AWAITING_REVIEW`. Um PR **não** fica `READY`
+apenas porque o código foi enviado.
 
 ## 4. Worktrees
 

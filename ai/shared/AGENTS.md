@@ -542,9 +542,12 @@ Antes de `READY`:
 - `MERGEABLE` não substitui aprovação; CI ausente não conta como verde;
   thread resolvida não cancela sozinha um `CHANGES_REQUESTED`.
 
-Se houver feedback pendente de tratamento, resposta não publicada ou
-review obrigatório em aberto: `BLOCKED` ou `AWAITING_REVIEW` — nunca
-`READY`.
+Se o trabalho técnico e o feedback já estiverem tratados e só faltar
+aprovação ou re-review humano: `AWAITING_REVIEW`. Se ainda houver
+pendência acionável nossa (comentário sem tratamento, resposta não
+publicada, thread bloqueante, CI obrigatório falhando ou
+`CHANGES_REQUESTED` sem correção): `BLOCKED`. Nunca `READY` nesses
+casos.
 
 ### Escrita
 
