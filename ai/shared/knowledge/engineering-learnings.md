@@ -2110,3 +2110,59 @@ Configuração observada do serviço: deploy a partir do repositório GitHub, um
 - [Automação bem-sucedida não prova resultado correto](#automação-bem-sucedida-não-prova-resultado-correto)
 - SQLite: `VACUUM INTO`, `PRAGMA integrity_check`, `PRAGMA foreign_key_check`, aspas em literais e identificadores
 - API GraphQL pública do Railway: `serviceInstanceDeployV2`, `deploymentTriggers`
+
+# Governança de review: push não encerra o PR
+
+## Confidence
+
+🟡 **Validado em laboratório / POC**
+
+- Observado em PRs pessoais: implementação, testes e push concluídos,
+  com review threads ainda abertas ou sem resposta publicada.
+- Regra consolidada em `ai/shared/docs/pull-request-reviews.md`.
+
+## Contexto
+
+Agentes e fluxos assistidos abriam PRs e atualizavam o código, mas o
+feedback dos revisores (especialmente threads inline) ficava sem
+classificação, resposta ou resolução verificada no GitHub.
+
+## Investigação
+
+| Observação | Evidência |
+|---|---|
+| Regras de PR cobriam criação e texto | `AGENTS.md` ("Pull Requests") sem ciclo de threads |
+| Checklist de conclusão parava em push/CI | "Estado da execução" sem itens de feedback |
+| Comentários gerais ≠ threads | Lista vazia de issue comments coexistia com threads abertas |
+| Merge bloqueado por threads não resolvidas | Ruleset exigindo resolução; merge só após `resolveReviewThread` |
+
+## Causa raiz
+
+Ausência de verificação efetiva do ciclo completo de reviews: o fluxo
+tratava publicação do código como prontidão do PR.
+
+## Solução adotada
+
+- Política proprietária com ciclo consultar → classificar → corrigir →
+  validar → publicar → responder → resolver → reconsultar.
+- Critérios `READY` / `AWAITING_REVIEW` / `BLOCKED` no `AGENTS.md`.
+- Reconciliação obrigatória no GitHub após escrita (não confiar só no
+  exit code do comando).
+
+## Lições aprendidas
+
+1. Push bem-sucedido não encerra o PR.
+2. Consultar threads GraphQL, não só comentários gerais.
+3. Responder na thread com contexto; depois resolver só se atendido.
+4. Reconsultar no GitHub antes de declarar `READY`.
+5. `MERGEABLE` e CI ausente não equivalem a aprovação técnica.
+
+## Recomendações futuras
+
+- Em PRs com ruleset de resolução obrigatória, tratar threads antes do
+  merge — inclusive as já corrigidas no código.
+
+## Referências
+
+- `ai/shared/docs/pull-request-reviews.md`
+- `ai/shared/AGENTS.md` (Pull Requests; estado da execução)

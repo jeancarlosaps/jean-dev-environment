@@ -139,9 +139,15 @@ Ao finalizar qualquer etapa, informar explicitamente:
 - Commit criado?
 - Push realizado?
 - PR criada ou atualizada?
-- CI verde?
+- CI obrigatório verde (ou ausente — nunca confundir ausência com aprovação)?
+- Feedback de review consultado e classificado?
+- Respostas publicadas nas threads pertinentes?
+- Threads resolvidas quando apropriado (e reconciliação no GitHub)?
+- Status do PR: `READY`, `AWAITING_REVIEW` ou `BLOCKED`?
 
-Nunca deixar esses estados implícitos.
+Nunca deixar esses estados implícitos. Push bem-sucedido **não**
+encerra o PR: o ciclo de review em
+`ai/shared/docs/pull-request-reviews.md` ainda é obrigatório.
 
 ### Paradas obrigatórias
 
@@ -495,6 +501,10 @@ explícita e causa comprovada.
 
 ## Pull Requests
 
+Política completa de feedback (comentários, reviews, threads inline,
+resposta, resolução e reconciliação):
+`ai/shared/docs/pull-request-reviews.md`.
+
 - Descobrir e respeitar a convenção do projeto (título, idioma,
   estrutura).
 - Procurar `.github/pull_request_template.md` (e variantes em
@@ -513,6 +523,28 @@ Conteúdo exclusivamente técnico. Nunca mencionar Claude, Cursor,
 ChatGPT, OpenAI, Anthropic, Copilot, Gemini, IA, AI, "Generated",
 "Assisted" ou "Powered by" — a mesma proibição vale para changelogs,
 documentação e release notes.
+
+### Feedback de review (obrigatório)
+
+Ciclo: **consultar → classificar → corrigir → validar → publicar →
+responder → resolver → reconsultar**. Detalhes e distinções
+(comentário geral ≠ review ≠ thread) no documento proprietário.
+
+Antes de `READY`:
+
+- Comentários gerais, reviews, inline e threads foram consultados
+  (lista vazia de comentários gerais não basta).
+- Cada apontamento foi classificado e tratado.
+- Respostas foram publicadas **nas threads** com contexto técnico
+  (proibido só "fixed"/"done").
+- Threads resolvidas apenas quando o apontamento estiver atendido e o
+  fluxo permitir; resolução confirmada de novo no GitHub.
+- `MERGEABLE` não substitui aprovação; CI ausente não conta como verde;
+  thread resolvida não cancela sozinha um `CHANGES_REQUESTED`.
+
+Se houver feedback pendente de tratamento, resposta não publicada ou
+review obrigatório em aberto: `BLOCKED` ou `AWAITING_REVIEW` — nunca
+`READY`.
 
 ### Escrita
 
@@ -569,7 +601,15 @@ repositório.** Sempre que o comando aceitar, passe `-R`:
 gh pr list -R owner/repository
 gh pr view 123 -R owner/repository
 gh pr checks 123 -R owner/repository
+gh pr view 123 -R owner/repository --json comments,reviews,reviewDecision,headRefOid
 ```
+
+Para review threads (incluindo resolvidas), use a API GraphQL
+`pullRequest.reviewThreads` — não confie só em comentários gerais.
+Responder e resolver: `gh api graphql` (`addPullRequestReviewComment` /
+`resolveReviewThread`) ou a UI. Se a escrita falhar, registre a
+limitação; não marque a thread como tratada. Detalhes:
+`ai/shared/docs/pull-request-reviews.md`.
 
 Motivação: o `gh` infere o repositório pelo `cwd`; em tarefas
 multi-repositório isso pode executar no repositório errado.

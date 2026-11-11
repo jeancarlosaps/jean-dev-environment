@@ -8,6 +8,9 @@ Siga integralmente as regras definidas em:
 `~/Developer/dev-env/ai/shared/AGENTS.md`
 
 Leia esse arquivo antes de qualquer operação Git, commit, PR ou
-implementação de componente. Em caso de conflito com instruções do
+implementação de componente. Em PRs sob nossa responsabilidade, o
+ciclo de feedback (consultar → responder → resolver → reconsultar) em
+`~/Developer/dev-env/ai/shared/docs/pull-request-reviews.md` é
+obrigatório antes de `READY`. Em caso de conflito com instruções do
 repositório, as regras de "nunca mencionar ferramentas de IA" e "nunca
 versionar configuração de IA" prevalecem sempre.
