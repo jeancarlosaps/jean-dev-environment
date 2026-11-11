@@ -321,6 +321,9 @@ valem os caminhos padrão das ferramentas.
 Política de worktrees e alertas:
 [`ai/shared/docs/worktrees-and-storage.md`](ai/shared/docs/worktrees-and-storage.md).
 
+Política de reviews (threads, respostas e critério `READY`):
+[`ai/shared/docs/pull-request-reviews.md`](ai/shared/docs/pull-request-reviews.md).
+
 Diagnóstico somente leitura:
 
 ```bash
