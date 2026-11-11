@@ -92,12 +92,16 @@ não são requisitos rígidos para todas as máquinas.
 
 Comandos de medição:
 
-- macOS / Linux: `df -g <caminho>` ou `df -h <caminho>`
+- macOS / Linux: preferir `df -k <caminho>` e converter para GiB
+  arredondando **para baixo** (`int(AvailKiB / 1048576)`). Evitar
+  `df -BG` no GNU: arredonda para cima e pode mascarar o estado crítico.
 - Windows: `Get-PSDrive`
 
 Medir o efeito de qualquer limpeza com `df` (ou equivalente) **antes e
 depois**. Em APFS, `du` pode superestimar clones e montagens virtuais;
 usar `du -x` e `mount` quando o número parecer inconsistente.
+
+Se a leitura de espaço falhar, tratar como erro — não assumir zero livre.
 
 ## 4. Área de rascunho opcional
 

@@ -1906,7 +1906,12 @@ Decisões: política proprietária de worktrees e armazenamento (`ai/shared/docs
 
 - Não medido quanto do espaço físico dos simuladores é compartilhado com o runtime.
 - A liberação de blocos no APFS pode ser assíncrona; medições foram feitas segundos após cada remoção.
-- Não há mecanismo oficial documentado para enxugar a VM de agente de desktop sem reinstalar o app.
+- Claude Desktop (3.6556.1+): a documentação oficial aponta
+  Settings → This computer → System → Manage Storage (ou `/storage`)
+  para limpar sessões inativas no dispositivo. Não há procedimento
+  oficial documentado para apagar seletivamente `rootfs.img` /
+  `sessiondata.img` em `vm_bundles/`; preservar esses arquivos até
+  haver guia oficial inequívoco ou autorização explícita.
 
 ## Lições aprendidas
 

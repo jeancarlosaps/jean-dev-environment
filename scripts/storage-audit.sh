@@ -10,10 +10,12 @@
 #   ./scripts/storage-audit.sh [caminho-do-repositório]
 #   DEV_STORAGE_OK_GIB=25 ./scripts/storage-audit.sh .
 #
-# Variáveis (GiB, inteiros):
-#   DEV_STORAGE_OK_GIB    desejado   (padrão 20)
-#   DEV_STORAGE_WARN_GIB  atenção    (padrão 10)
-#   DEV_STORAGE_CRIT_GIB  crítico    (padrão = WARN)
+# Variáveis (GiB, inteiros não negativos):
+#   DEV_STORAGE_OK_GIB    desejado   (padrão 20)  — free >= OK → NORMAL
+#   DEV_STORAGE_WARN_GIB  atenção    (padrão 10)  — CRIT <= free < OK → ATENCAO
+#   DEV_STORAGE_CRIT_GIB  crítico    (padrão = WARN) — free < CRIT → CRITICO
+#   Exige: CRIT <= WARN <= OK.
+#   DEV_STORAGE_FREE_GIB  opcional: sobrescreve a medição (testes)
 # =====================================================================
 set -eu
 set -o pipefail
@@ -32,39 +34,55 @@ Não exclui nada. Inventaria espaço livre, limites configurados e
 worktrees do repositório informado (ou do diretório atual).
 
 Variáveis: DEV_STORAGE_OK_GIB, DEV_STORAGE_WARN_GIB, DEV_STORAGE_CRIT_GIB
+Opcional (testes): DEV_STORAGE_FREE_GIB
 EOF
 }
 
-case "${1:-}" in
-  -h|--help) usage; exit 0 ;;
-esac
-
-TARGET="${1:-.}"
-if [ ! -d "$TARGET" ]; then
-  echo "caminho inexistente: $TARGET" >&2
-  exit 2
-fi
-TARGET=$(cd -P "$TARGET" && pwd)
-
-# --- espaço livre ----------------------------------------------------
-_free_gib_posix() {
-  local path="$1"
-  # Preferir blocos de 1G quando disponíveis (df -g no BSD/macOS).
-  if df -g "$path" >/dev/null 2>&1; then
-    df -g "$path" 2>/dev/null | awk 'NR==2 {print $4; exit}'
-    return 0
-  fi
-  # Linux: df -BG
-  if df -BG "$path" >/dev/null 2>&1; then
-    df -BG "$path" 2>/dev/null | awk 'NR==2 {gsub(/G/,"",$4); print $4; exit}'
-    return 0
-  fi
-  # Fallback: 1K-blocks → GiB
-  df -k "$path" 2>/dev/null | awk 'NR==2 {printf "%d\n", int($4/1048576); exit}'
+_is_uint() {
+  case "$1" in
+    ''|*[!0-9]*) return 1 ;;
+    *) return 0 ;;
+  esac
 }
 
-FREE_GIB=$(_free_gib_posix "$TARGET")
-FREE_GIB=${FREE_GIB:-0}
+_validate_limits() {
+  if ! _is_uint "$OK_GIB" || ! _is_uint "$WARN_GIB" || ! _is_uint "$CRIT_GIB"; then
+    echo "limites invalidos: use inteiros nao negativos" >&2
+    echo "ok=$OK_GIB warn=$WARN_GIB crit=$CRIT_GIB" >&2
+    return 1
+  fi
+  if [ "$CRIT_GIB" -gt "$WARN_GIB" ] || [ "$WARN_GIB" -gt "$OK_GIB" ]; then
+    echo "limites inconsistentes: exige CRIT <= WARN <= OK" >&2
+    echo "ok=$OK_GIB warn=$WARN_GIB crit=$CRIT_GIB" >&2
+    return 1
+  fi
+  return 0
+}
+
+# Espaço livre em GiB, arredondado para baixo (1 KiB-blocks / 1048576).
+# Não usa df -g / df -BG: no GNU, -BG arredonda para cima e mascara CRITICO.
+_free_gib_posix() {
+  local path="$1"
+  local out rc=0
+  out=$(df -k "$path" 2>/dev/null) || rc=$?
+  if [ "$rc" -ne 0 ] || [ -z "$out" ]; then
+    echo "falha ao ler espaco livre com df -k em: $path" >&2
+    return 1
+  fi
+  local free
+  free=$(printf '%s\n' "$out" | awk 'NR==2 {
+    if ($4 ~ /^[0-9]+$/) { printf "%d\n", int($4 / 1048576); exit 0 }
+    exit 1
+  }') || {
+    echo "saida inesperada do df -k em: $path" >&2
+    return 1
+  }
+  if ! _is_uint "$free"; then
+    echo "nao foi possivel obter livre_GiB em: $path" >&2
+    return 1
+  fi
+  printf '%s\n' "$free"
+}
 
 _status_for() {
   local free="$1"
@@ -76,6 +94,34 @@ _status_for() {
     echo "NORMAL"
   fi
 }
+
+case "${1:-}" in
+  -h|--help) usage; exit 0 ;;
+esac
+
+if ! _validate_limits; then
+  exit 2
+fi
+
+TARGET="${1:-.}"
+if [ ! -d "$TARGET" ]; then
+  echo "caminho inexistente: $TARGET" >&2
+  exit 2
+fi
+TARGET=$(cd -P "$TARGET" && pwd)
+
+# --- espaço livre ----------------------------------------------------
+if [ -n "${DEV_STORAGE_FREE_GIB:-}" ]; then
+  if ! _is_uint "$DEV_STORAGE_FREE_GIB"; then
+    echo "DEV_STORAGE_FREE_GIB invalido: $DEV_STORAGE_FREE_GIB" >&2
+    exit 2
+  fi
+  FREE_GIB="$DEV_STORAGE_FREE_GIB"
+else
+  if ! FREE_GIB=$(_free_gib_posix "$TARGET"); then
+    exit 3
+  fi
+fi
 
 STATUS=$(_status_for "$FREE_GIB")
 
@@ -124,11 +170,17 @@ COMMON=$(cd -P "$TARGET" && cd -P "$COMMON" && pwd)
 echo "=== Worktrees ==="
 echo "git_common_dir=$COMMON"
 
-# Contadores para o resumo
 WT_TOTAL=0
 WT_DIRTY=0
 WT_AHEAD=0
 WT_REVIEW=0
+
+# status porcelain sem atualizar índice; força untracked independente de
+# status.showUntrackedFiles.
+_git_status_porcelain() {
+  local path="$1"
+  git -C "$path" --no-optional-locks status --porcelain=v1 -unormal
+}
 
 _emit_wt() {
   local path="$1" head="$2" branch="$3" bare="$4" locked="$5"
@@ -140,14 +192,21 @@ _emit_wt() {
   [ "$bare" = "1" ] && echo "bare=1"
   [ -n "$locked" ] && echo "locked=$locked"
 
-  local dirty=0 ahead="?" review=0 uniq="?"
+  local dirty=0 ahead="?" review=0 uniq="?" status_out="" status_rc=0
   if [ -d "$path" ] && [ "$bare" != "1" ]; then
-    if [ -n "$(git -C "$path" status --porcelain 2>/dev/null | head -c 1)" ]; then
-      dirty=1
-      WT_DIRTY=$((WT_DIRTY + 1))
+    status_out=$(_git_status_porcelain "$path" 2>/dev/null) || status_rc=$?
+    if [ "$status_rc" -ne 0 ]; then
+      echo "dirty=(indisponivel)"
+      echo "status_error=1"
       review=1
+    else
+      if [ -n "$status_out" ]; then
+        dirty=1
+        WT_DIRTY=$((WT_DIRTY + 1))
+        review=1
+      fi
+      echo "dirty=$dirty"
     fi
-    echo "dirty=$dirty"
     if git -C "$path" rev-parse --abbrev-ref '@{u}' >/dev/null 2>&1; then
       ahead=$(git -C "$path" rev-list --count '@{u}..HEAD' 2>/dev/null || echo '?')
       echo "ahead_of_upstream=$ahead"
@@ -157,11 +216,8 @@ _emit_wt() {
       fi
     else
       echo "upstream=(nenhum)"
-      # Sem upstream: revisar antes de descartar (pode ser branch só local).
       review=1
     fi
-    # Contagem vs origin/HEAD é informativa: squash/rebase gera "únicos"
-    # sem significar trabalho não publicado.
     if [ -n "$head" ]; then
       local main_ref
       main_ref=$(git -C "$path" symbolic-ref -q refs/remotes/origin/HEAD 2>/dev/null || true)
@@ -187,9 +243,10 @@ _emit_wt() {
   echo "nota=candidato_a_remocao_somente_apos_revisao_humana"
 }
 
-# Parser porcelain
+# Porcelain -z: caminhos literais, campos terminados em NUL (sem escapes).
+# Evita $(...) para não descartar NULs.
 path="" head="" branch="" bare=0 locked=""
-while IFS= read -r line || [ -n "$line" ]; do
+while IFS= read -r -d '' line || [ -n "$line" ]; do
   case "$line" in
     worktree\ *)
       if [ -n "$path" ]; then
@@ -209,9 +266,8 @@ while IFS= read -r line || [ -n "$line" ]; do
       fi
       ;;
   esac
-done <<EOF
-$(git -C "$TARGET" worktree list --porcelain)
-EOF
+done < <(git -C "$TARGET" worktree list --porcelain -z)
+
 if [ -n "$path" ]; then
   _emit_wt "$path" "$head" "$branch" "$bare" "$locked"
 fi
