@@ -1902,6 +1902,21 @@ Em outra máquina macOS com SSD interno pequeno (~228 GiB) e volume externo APFS
 
 Decisões: política proprietária de worktrees e armazenamento (`ai/shared/docs/worktrees-and-storage.md`); limites padrão 20 / 10 GiB via `DEV_STORAGE_*`; script somente leitura `scripts/storage-audit.sh`; reutilização obrigatória de checkout em tarefas sequenciais.
 
+## Ajustes posteriores (espaço não explicado entre `du` e o volume)
+
+Investigação somente leitura (`df`, `diskutil`, `du`, `stat`, `lsof`, `sudo` só para leitura) de uma diferença grande entre o consumo do volume Data e o que o `du` enxergava. Fatos verificados, reproduzíveis em qualquer macOS com APFS:
+
+- **Lógico × alocado.** Arquivos `dataless` do iCloud Drive mostram o tamanho lógico em `ls`/`find -size`, mas `stat -f "%z %b %Sf"` revela 0 blocos e a flag `dataless`: não ocupam o SSD.
+- **Clones, montagens e snapshots.** Soma dos blocos por arquivo acima do consumo do volume (`diskutil info`) não comprova clones: montagens virtuais dentro da árvore também inflam a soma (ver o caso do CoreDevice acima). Restringir a contagem ao volume (`du -x`, `find -xdev`) e conferir `mount`; só então tratar o excesso como blocos compartilhados (clones APFS). Uma atualização do macOS já preparada mantém versões `current` e `proposed` no Preboot e um snapshot `com.apple.os.update-MSUPrepareUpdate`; os snapshots `com.apple.os.update-*` ficam no volume System, não no Data. JARs clonados mantêm a data de criação da origem; para saber o que uma operação criou, avaliar a data de criação (`stat -f %SB`) da pasta que os contém.
+- **`sudo` não basta.** Mesmo como root, áreas protegidas pelo TCC (Mail, Messages, Safari, Group Containers, parte de Containers, `.Spotlight-V100`, dados protegidos de outras contas) retornam `Operation not permitted`. Medir essas áreas exige Acesso Total ao Disco para o processo que executa a auditoria.
+- **Arquivos apagados mas abertos.** `lsof +L1` repete o mesmo inode em vários descritores; a soma bruta pode superestimar o valor real várias vezes. Deduplicar por dispositivo+inode.
+- **Outras contas logadas** em segundo plano consomem o mesmo volume e só aparecem, agregadas, com `sudo`.
+- **Diagnóstico com efeito colateral.** `softwareupdate -l` acionou scan e download de catálogo no `softwareupdated`/`mobileassetd`. Abrir uma IDE para usar seu gerenciador de SDK reabriu o último projeto e iniciou Gradle sync, recriando GBs de cache em minutos.
+- **Dados de ferramentas de IA.** O banco de estado de um editor baseado em VS Code era quase todo histórico de agente/chat, com `freelist_count` desprezível (`VACUUM` não ajudaria). A VM local de um agente de desktop tinha a imagem base com hash igual ao publicado pelo fornecedor, mas os dados de sessão ficam em arquivos separados, sem backup conhecido.
+- **Dependência real × `PATH`.** Um SDK Flutter fora do `PATH` era o usado pelo projeto: `android/local.properties`, `ios/Flutter/Generated.xcconfig` e `.dart_tool/package_config.json` apontavam para ele.
+
+Decisões: históricos, sessões, memórias, checkpoints e configurações de ferramentas de IA são preservados; só sai runtime ou cache comprovadamente regenerável e sem uso. Na dúvida (AVD ainda registrado, VM com dados de sessão), preservar.
+
 ## Lacunas
 
 - Não medido quanto do espaço físico dos simuladores é compartilhado com o runtime.
@@ -1912,6 +1927,9 @@ Decisões: política proprietária de worktrees e armazenamento (`ai/shared/docs
   oficial documentado para apagar seletivamente `rootfs.img` /
   `sessiondata.img` em `vm_bundles/`; preservar esses arquivos até
   haver guia oficial inequívoco ou autorização explícita.
+- Quanto do Preboot é liberado após instalar uma atualização já
+  preparada (blocos compartilhados entre `current` e `proposed` não
+  medidos).
 
 ## Lições aprendidas
 
@@ -1933,6 +1951,13 @@ Decisões: política proprietária de worktrees e armazenamento (`ai/shared/docs
 16. Tarefa sequencial reutiliza o checkout; worktree extra só com paralelismo ou isolamento real.
 17. PR mergeado não autoriza remoção automática de worktree: conferir processo ativo, alterações e commits exclusivos.
 18. Volume externo com pasta de rascunho só ajuda se `DEV_SCRATCH_DIR` estiver definida e o comando apontar caminhos explícitos para lá.
+19. Antes de concluir que há espaço escondido, distinguir lógico de alocado (`stat -f "%z %b %Sf"`): `dataless` do iCloud não ocupa disco. Soma por arquivo acima do consumo do volume sugere clones, mas só depois de descartar montagens com `du -x` e `mount`.
+20. Não prometer liberação integral do Preboot após instalar uma atualização preparada: `current` e `proposed` podem compartilhar blocos; medir o volume com `diskutil` antes e depois.
+21. `sudo` não atravessa o TCC; registrar os caminhos bloqueados como inconclusivos em vez de estimá-los.
+22. Deduplicar `lsof +L1` por dispositivo+inode antes de somar.
+23. Em auditoria de disco, evitar comandos que baixam ou escrevem (`softwareupdate -l`) e não abrir IDE com reabertura de projeto ativa; usar o gerenciador de linha de comando da ferramenta ou deixar a ação para o usuário.
+24. Histórico de agente não é cache: bancos de estado de editor, sessões e imagens com dados de sessão só saem por mecanismo oficial que comprove a preservação.
+25. Ferramenta fora do `PATH` não é prova de órfã: conferir as referências absolutas geradas pelos projetos.
 
 ## Recomendações futuras
 
