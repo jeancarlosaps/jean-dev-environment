@@ -114,6 +114,9 @@ git -C "$repo" symbolic-ref HEAD refs/heads/main
 git -C "$repo" config user.name "Tester"
 git -C "$repo" config user.email "tester@example.com"
 git -C "$repo" config commit.gpgsign false
+# Hooks da máquina (core.hooksPath global) não julgam o repositório de teste
+mkdir -p "$work/empty-hooks"
+git -C "$repo" config core.hooksPath "$work/empty-hooks"
 # Preferência que omitiria untracked sem -unormal
 git -C "$repo" config status.showUntrackedFiles no
 echo base >"$repo/README"
