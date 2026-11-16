@@ -1,0 +1,29 @@
+name: tests
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  scripts:
+    name: scripts (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Ferramentas
+        run: bash --version | head -1; git --version; jq --version; python3 --version
+      - name: merge gate e guard
+        run: bash scripts/tests/merge-gate.sh
+      - name: storage-audit
+        run: bash scripts/tests/storage-audit.sh
+      - name: hooks do git
+        run: bash git/hooks/tests/pre-push-range.sh
