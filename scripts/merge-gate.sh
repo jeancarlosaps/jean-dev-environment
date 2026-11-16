@@ -211,7 +211,7 @@ report=$(jq -n \
       (if $pr.reviewDecision == "REVIEW_REQUIRED" then
          f("BLOCKER"; "MG-SERVER"; "o GitHub informa REVIEW_REQUIRED: a exigência de revisão do servidor não foi atendida"; "obter as aprovações exigidas pelo repositório") else empty end),
       (if $classic_unknown == "true" then
-         f("WARNING"; "MG-SERVER"; "proteção clássica ativa em \($pr.baseRefName); mínimo de aprovações não legível sem admin"; "o reviewDecision do GitHub cobre a exigência; confirmar o mínimo com quem administra o repositório") else empty end),
+         f("BLOCKER"; "MG-SERVER"; "proteção clássica ativa em \($pr.baseRefName); mínimo efetivo de aprovações desconhecido (ilegível sem admin)"; "confirmar o mínimo com quem administra o repositório; o gate não libera sem ele") else empty end),
       (if ($changes | length) > 0 then f("BLOCKER"; "MG-CHANGES"; "CHANGES_REQUESTED vigente: \($changes | join(", "))"; "atender e pedir re-review") else empty end),
       (if $rt.totalCount > ($rt.nodes | length) then
          f("BLOCKER"; "MG-THREADS"; "\($rt.totalCount) threads, só \($rt.nodes | length) lidas"; "conferir as threads manualmente") else empty end),

@@ -107,11 +107,15 @@ def scan_text(words):
 
 
 def resolve(path, cwd):
-    return path if os.path.isabs(path) else os.path.join(cwd, path)
+    if os.path.isabs(path):
+        return path
+    return os.path.join(cwd, path) if cwd else None
 
 
 def scan_file(path, cwd, label):
     full = resolve(path, cwd)
+    if full is None:
+        return  # diretório indeterminado: não há arquivo a ler
     try:
         if not os.path.isfile(full) or os.path.getsize(full) > 1_000_000:
             return
@@ -126,6 +130,8 @@ def scan_file(path, cwd, label):
 
 
 def git(cwd, *args):
+    if not cwd:
+        return None
     try:
         out = subprocess.run(["git", "-C", cwd, *args], capture_output=True,
                              text=True, timeout=5)
@@ -147,8 +153,40 @@ def analyze(text, cwd, depth=0):
     except ValueError as exc:
         result["error"] = f"comando não tokenizável: {exc}"
         return
+    grouped = "(" in tokens or ")" in tokens
     for words in split_commands(tokens):
+        if words[0] in ("cd", "pushd", "popd"):
+            target = words[1] if len(words) > 1 and words[0] != "popd" else None
+            if grouped or target is None or target.startswith(("-", "~")) \
+                    or "$" in target:
+                cwd = None  # diretório efetivo deixa de ser conhecido
+            else:
+                cwd = resolve(target, cwd)
+            continue
         analyze_simple(words, cwd, depth)
+
+
+def substitutions(text):
+    """Conteúdo de $(...) e `...` que sobrou dentro de palavras citadas."""
+    found, i = [], 0
+    while i < len(text):
+        if text.startswith("$(", i):
+            level, j = 1, i + 2
+            while j < len(text) and level:
+                level += {"(": 1, ")": -1}.get(text[j], 0)
+                j += 1
+            found.append(text[i + 2:j - 1])
+            i = j
+        elif text[i] == "`":
+            end = text.find("`", i + 1)
+            if end < 0:
+                found.append(text[i + 1:])
+                break
+            found.append(text[i + 1:end])
+            i = end + 1
+        else:
+            i += 1
+    return found
 
 
 def analyze_simple(words, cwd, depth):
@@ -198,6 +236,8 @@ def analyze_simple(words, cwd, depth):
     if not words:
         return
 
+    for inner in substitutions(" ".join(words)):
+        analyze(inner, cwd, depth + 1)
     scan_text(words)
     base = os.path.basename(words[0])
     if base in INTERPRETERS:
@@ -206,7 +246,7 @@ def analyze_simple(words, cwd, depth):
     elif base == "gh":
         parse_gh(words[1:], env)
     elif base == "git":
-        parse_git(words[1:], cwd)
+        parse_git(words[1:], cwd, env)
     elif "/" in words[0]:
         scan_file(words[0], cwd, "script")
 
@@ -249,6 +289,8 @@ def parse_gh(words, env):
                  "head": None, "admin": False, "ambiguous": [],
                  "env_repo": env.get("GH_REPO")}
         targets = positionals[2:]
+        if env.get("GH_HOST"):
+            merge["ambiguous"].append("host alternativo (GH_HOST)")
         for name, value in opts:
             if name.startswith("--admin"):
                 merge["admin"] = True
@@ -280,6 +322,10 @@ def parse_gh(words, env):
                 merge["head"] = value[4:]
             elif name == "--input":
                 merge["ambiguous"].append("corpo via --input não é verificável")
+            elif name == "--hostname":
+                merge["ambiguous"].append(f"host alternativo ({value})")
+        if env.get("GH_HOST"):
+            merge["ambiguous"].append("host alternativo (GH_HOST)")
         result["merges"].append(merge)
 
 
@@ -296,8 +342,11 @@ def gh_alias(name):
     return None
 
 
-def parse_git(words, cwd):
+def parse_git(words, cwd, env):
     eff, unresolved = cwd, []
+    overridden = [k for k in env if k.startswith("GIT_CONFIG") or k in ("GIT_DIR", "GIT_WORK_TREE")]
+    if overridden:
+        unresolved.append("configuração do git pelo ambiente (" + ", ".join(sorted(overridden)) + ")")
     i = 0
     while i < len(words) and words[i].startswith("-"):
         tok = words[i]
@@ -305,7 +354,13 @@ def parse_git(words, cwd):
             eff = resolve(words[i + 1], eff)
             i += 2
         elif tok == "-c":
+            key = (words[i + 1] if i + 1 < len(words) else "").split("=", 1)[0].lower()
+            if key.startswith(("remote.", "push.", "branch.", "url.")):
+                unresolved.append(f"configuração inline -c {key}")
             i += 2
+        elif tok.startswith("--config-env"):
+            unresolved.append("configuração inline --config-env")
+            i += 1 if "=" in tok else 2
         elif tok.startswith("--git-dir") or tok.startswith("--work-tree"):
             unresolved.append("--git-dir/--work-tree")
             i += 1 if "=" in tok else 2
@@ -320,11 +375,18 @@ def parse_git(words, cwd):
     if sub != "push":
         return
 
-    positionals, j = [], 0
+    positionals, j, repo_flag = [], 0, None
     while j < len(rest):
         tok = rest[j]
         if tok in PUSH_VALUE_FLAGS:
+            if tok == "--repo":
+                repo_flag = rest[j + 1] if j + 1 < len(rest) else None
             j += 2
+            continue
+        if "=" in tok and tok.split("=", 1)[0] in PUSH_VALUE_FLAGS:
+            if tok.startswith("--repo="):
+                repo_flag = tok.split("=", 1)[1]
+            j += 1
             continue
         if tok in PUSH_BULK_FLAGS:
             unresolved.append(f"push em massa ({tok})")
@@ -333,7 +395,10 @@ def parse_git(words, cwd):
         j += 1
 
     current = git(eff, "symbolic-ref", "--short", "-q", "HEAD")
-    remote, refspecs = (positionals[0] if positionals else None), positionals[1:]
+    if repo_flag is not None:
+        remote, refspecs = repo_flag, positionals
+    else:
+        remote, refspecs = (positionals[0] if positionals else None), positionals[1:]
     targets = []
 
     def add_refspec(spec):

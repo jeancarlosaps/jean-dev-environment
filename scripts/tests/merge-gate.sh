@@ -221,7 +221,7 @@ gate "sem -R explícito: erro de uso" 2 "owner/repo explícito" - 42
 scenario '.classic_enabled = true | .classic_reviews = 3'
 gate "proteção clássica legível com mínimo 3: BLOCKER" 1 "exigidas 3 (servidor: 3" - "${R[@]}"
 scenario '.classic_enabled = true | .classic_forbidden = true'
-gate "proteção clássica ilegível sem admin: WARNING" 0 "mínimo de aprovações não legível sem admin" "BLOCKER |" "${R[@]}"
+gate "proteção clássica ilegível sem admin: BLOCKER (fail-closed)" 1 "BLOCKER | MG-SERVER | proteção clássica ativa em dev; mínimo efetivo de aprovações desconhecido" "SEM BLOQUEIO" "${R[@]}"
 scenario '.classic_enabled = true | .classic_error = true'
 gate "erro ao ler proteção clássica: erro de coleta" 2 "proteção clássica" - "${R[@]}"
 scenario '.branch_error = true'
@@ -329,6 +329,11 @@ OSA_SHIM_REPLY="button returned:Autorizar exceção, text returned:42, gave up:f
 scenario '.pr_view.reviews |= .[:1] | .pr_view.reviewDecision = "REVIEW_REQUIRED"'
 OSA_SHIM_REPLY="button returned:Autorizar exceção, text returned:42, gave up:false" \
   guard "servidor com REVIEW_REQUIRED: deny sem diálogo" --claude deny "MG-SERVER" "gh pr merge 42 -R acme/app $M"
+scenario '.pr_view.reviews |= .[:1] | .classic_enabled = true | .classic_forbidden = true'
+OSA_SHIM_REPLY="button returned:Autorizar exceção, text returned:42, gave up:false" \
+  guard "proteção clássica ilegível: deny sem diálogo" --claude deny "mínimo efetivo de aprovações desconhecido" "gh pr merge 42 -R acme/app $M"
+scenario '.classic_enabled = true | .classic_forbidden = true'
+guard "proteção clássica ilegível com 2 aprovações: deny" --claude deny "mínimo efetivo de aprovações desconhecido" "gh pr merge 42 -R acme/app $M"
 if [ "$(osa_calls)" -eq "$before" ]; then ok "diálogo não abre fora da elegibilidade"; else out=""; fail "diálogo não abre fora da elegibilidade" "osascript chamado"; fi
 
 # --- guard: falha segura ----------------------------------------------
@@ -379,7 +384,20 @@ git -C "$repo_feat" config --unset branch.feat/x.merge
 git -C "$repo_feat" config remote.origin.push refs/heads/feat/x:refs/heads/main
 guard "remote.origin.push para main: ask" --claude ask "'main'" "git push" "$repo_feat"
 guard "--git-dir: ask" --claude ask "git-dir" "git --git-dir=/tmp/x.git push origin feat/x" "$repo_feat"
+guard "push em substituição entre aspas: ask" --claude ask "'main'" "echo \"\$(git push origin HEAD:main)\"" "$repo_feat"
+guard "push em crase: ask" --claude ask "'main'" "echo \`git push origin HEAD:main\`" "$repo_feat"
+guard "cd para outro repositório antes do push: ask" --claude ask "'main'" "cd ../repo-main && git push origin HEAD" "$repo_feat"
+guard "cd relativo resolve no diretório certo: ask" --claude ask "'epic/ABC-1'" "cd ../repo && git push" "$repo_feat"
+guard "cd - torna o destino indeterminado: ask" --claude ask "não determinado" "cd - && git push origin HEAD" "$repo_feat"
+guard "cd em subshell torna o destino indeterminado: ask" --claude ask "não determinado" "(cd ../repo-main) && git push origin HEAD" "$repo_feat"
+guard "git -c remote.origin.push inline: ask" --claude ask "configuração inline" "git -c remote.origin.push=HEAD:main push origin" "$repo_feat"
+guard "git -c sem efeito no destino: sem decisão" --claude none - "git -c core.quotepath=off push origin feat/x" "$repo_feat"
+guard "GIT_CONFIG_PARAMETERS no ambiente: ask" --claude ask "pelo ambiente" "GIT_CONFIG_PARAMETERS=x git push origin feat/x" "$repo_feat"
+guard "push --repo origin HEAD:main: ask" --claude ask "'main'" "git push --repo origin HEAD:main" "$repo_feat"
+guard "push --repo=origin HEAD:main: ask" --claude ask "'main'" "git push --repo=origin HEAD:main" "$repo_feat"
 scenario '.'
+guard "API com --hostname: deny" --claude deny "host alternativo" "gh api --hostname ghe.example -X PUT repos/acme/app/pulls/42/merge -f sha=$H"
+guard "GH_HOST no merge: deny" --claude deny "host alternativo" "GH_HOST=ghe.example gh pr merge 42 -R acme/app $M"
 guard "push oficial e merge no mesmo comando: deny" --claude deny "no mesmo comando" "git push origin HEAD:dev && gh pr merge 42 -R acme/app $M" "$repo"
 guard "push oficial e merge com --admin: deny" --claude deny - "git push origin HEAD:dev && gh pr merge 42 -R acme/app --admin $M" "$repo"
 
