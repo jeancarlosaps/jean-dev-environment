@@ -395,7 +395,29 @@ guard "git -c sem efeito no destino: sem decisão" --claude none - "git -c core.
 guard "GIT_CONFIG_PARAMETERS no ambiente: ask" --claude ask "pelo ambiente" "GIT_CONFIG_PARAMETERS=x git push origin feat/x" "$repo_feat"
 guard "push --repo origin HEAD:main: ask" --claude ask "'main'" "git push --repo origin HEAD:main" "$repo_feat"
 guard "push --repo=origin HEAD:main: ask" --claude ask "'main'" "git push --repo=origin HEAD:main" "$repo_feat"
+guard "refspec ':' (branches correspondentes): ask" --claude ask "branches correspondentes" "git push origin :" "$repo_feat"
+guard "refspec '+:': ask" --claude ask "branches correspondentes" "git push origin +:" "$repo_feat"
+guard "GIT_CONFIG antes de bash -c chega ao push interno: ask" --claude ask "pelo ambiente" "GIT_CONFIG_PARAMETERS=x bash -c 'git push origin feat/x'" "$repo_feat"
+guard "export de GIT_CONFIG antes do push: ask" --claude ask "pelo ambiente" "export GIT_CONFIG_COUNT=1; git push origin feat/x" "$repo_feat"
+repo_pr="$work/repo-pushremote"
+git init -q "$repo_pr"
+git -C "$repo_pr" checkout -q -b feat/x
+git -C "$repo_pr" config branch.feat/x.remote origin
+git -C "$repo_pr" config branch.feat/x.pushRemote publish
+git -C "$repo_pr" config remote.publish.push HEAD:main
+guard "branch.pushRemote tem precedência sobre branch.remote: ask" --claude ask "'main'" "git push" "$repo_pr"
+git -C "$repo_pr" config --unset branch.feat/x.pushRemote
+git -C "$repo_pr" config remote.pushDefault publish
+guard "remote.pushDefault tem precedência sobre branch.remote: ask" --claude ask "'main'" "git push" "$repo_pr"
+guard "push em substituição no alvo de redirecionamento: ask" --claude ask "'main'" "echo done > \"\$(git push origin HEAD:main)\"" "$repo_feat"
 scenario '.'
+guard "merge em substituição no alvo de redirecionamento: deny" --claude deny "forma não reconhecida" "echo done > \"\$(gh pr merge 42 -R acme/app $M)\""
+guard "merge em atribuição citada: deny" --claude deny "forma não reconhecida" "RESULT=\"\$(gh pr merge 42 -R acme/app)\""
+guard "merge em atribuição antes de comando: deny" --claude deny "forma não reconhecida" "X=\"\$(gh pr merge 42 -R acme/app)\" ls"
+guard "merge em export: deny" --claude deny "forma não reconhecida" "export X=\"\$(gh pr merge 42 -R acme/app)\""
+guard "atribuição sem substituição: sem decisão" --claude none - "X=\"pr merge\" ls"
+guard "GH_HOST antes de bash -c chega ao merge interno: deny" --claude deny "host alternativo" "GH_HOST=ghe.example bash -c 'gh pr merge 42 -R acme/app $M'"
+guard "export GH_HOST antes do merge: deny" --claude deny "host alternativo" "export GH_HOST=ghe.example; gh pr merge 42 -R acme/app $M"
 guard "API com --hostname: deny" --claude deny "host alternativo" "gh api --hostname ghe.example -X PUT repos/acme/app/pulls/42/merge -f sha=$H"
 guard "GH_HOST no merge: deny" --claude deny "host alternativo" "GH_HOST=ghe.example gh pr merge 42 -R acme/app $M"
 guard "push oficial e merge no mesmo comando: deny" --claude deny "no mesmo comando" "git push origin HEAD:dev && gh pr merge 42 -R acme/app $M" "$repo"

@@ -66,11 +66,12 @@ def tokenize(text):
     return list(lex)
 
 
-def split_commands(tokens):
+def split_commands(tokens, redirects):
     commands, current, skip_next = [], [], False
     for tok in tokens:
         if skip_next:
             skip_next = False
+            redirects.append(tok)  # alvo: pode conter substituição de comando
             continue
         if tok and set(tok) <= SEPARATORS:
             if current:
@@ -144,7 +145,17 @@ def strip_heads(ref):
     return ref[len("refs/heads/"):] if ref.startswith("refs/heads/") else ref
 
 
-def analyze(text, cwd, depth=0):
+def inspect_expansions(text, cwd, depth, env):
+    """Texto que o shell expande (atribuição, alvo de redirecionamento)."""
+    if "$(" not in text and "`" not in text:
+        return
+    result["hits"] += len(MERGE_LIKE.findall(text))
+    for inner in substitutions(text):
+        analyze(inner, cwd, depth + 1, env)
+
+
+def analyze(text, cwd, depth=0, env=None):
+    env = dict(env or {})
     if depth > 5:
         result["error"] = "aninhamento de shells além do limite"
         return
@@ -154,7 +165,18 @@ def analyze(text, cwd, depth=0):
         result["error"] = f"comando não tokenizável: {exc}"
         return
     grouped = "(" in tokens or ")" in tokens
-    for words in split_commands(tokens):
+    redirects = []
+    commands = split_commands(tokens, redirects)
+    for target in redirects:
+        inspect_expansions(target, cwd, depth, env)
+    for words in commands:
+        if words[0] == "export":
+            for tok in words[1:]:
+                if ASSIGNMENT.match(tok):
+                    inspect_expansions(tok, cwd, depth, env)
+                    key, value = tok.split("=", 1)
+                    env[key] = value
+            continue
         if words[0] in ("cd", "pushd", "popd"):
             target = words[1] if len(words) > 1 and words[0] != "popd" else None
             if grouped or target is None or target.startswith(("-", "~")) \
@@ -163,7 +185,7 @@ def analyze(text, cwd, depth=0):
             else:
                 cwd = resolve(target, cwd)
             continue
-        analyze_simple(words, cwd, depth)
+        analyze_simple(words, cwd, depth, env)
 
 
 def substitutions(text):
@@ -189,13 +211,14 @@ def substitutions(text):
     return found
 
 
-def analyze_simple(words, cwd, depth):
-    env = {}
+def analyze_simple(words, cwd, depth, inherited=None):
+    env = dict(inherited or {})
     words = list(words)
     while words:
         head = words[0]
         base = os.path.basename(head)
         if ASSIGNMENT.match(head):
+            inspect_expansions(head, cwd, depth, env)
             key, value = head.split("=", 1)
             env[key] = value
             words.pop(0)
@@ -206,6 +229,7 @@ def analyze_simple(words, cwd, depth):
                 if tok in ("-u", "--unset", "-C", "--chdir", "-S") and words:
                     words.pop(0)
                 elif ASSIGNMENT.match(tok):
+                    inspect_expansions(tok, cwd, depth, env)
                     key, value = tok.split("=", 1)
                     env[key] = value
         elif base in WRAPPERS:
@@ -217,14 +241,14 @@ def analyze_simple(words, cwd, depth):
             while words and words[0].startswith("-") and words[0] != "-":
                 opt = words.pop(0)
                 if not opt.startswith("--") and "c" in opt[1:]:
-                    analyze(words.pop(0) if words else "", cwd, depth + 1)
+                    analyze(words.pop(0) if words else "", cwd, depth + 1, env)
                     return
             if words:
                 scan_file(words[0], cwd, "script")
             return
         elif base == "eval":
             words.pop(0)
-            analyze(" ".join(words), cwd, depth + 1)
+            analyze(" ".join(words), cwd, depth + 1, env)
             return
         elif base in ("source", "."):
             words.pop(0)
@@ -237,7 +261,7 @@ def analyze_simple(words, cwd, depth):
         return
 
     for inner in substitutions(" ".join(words)):
-        analyze(inner, cwd, depth + 1)
+        analyze(inner, cwd, depth + 1, env)
     scan_text(words)
     base = os.path.basename(words[0])
     if base in INTERPRETERS:
@@ -403,6 +427,9 @@ def parse_git(words, cwd, env):
 
     def add_refspec(spec):
         spec = spec.lstrip("+")
+        if spec == ":":
+            unresolved.append("push de branches correspondentes (:)")
+            return
         if "*" in spec:
             unresolved.append(f"refspec com curinga {spec}")
             return
@@ -433,7 +460,9 @@ def parse_git(words, cwd, env):
         if not current:
             unresolved.append("destino não determinado (HEAD sem branch ou diretório inválido)")
         else:
-            remote = remote or git(eff, "config", f"branch.{current}.remote") or "origin"
+            remote = remote or git(eff, "config", f"branch.{current}.pushRemote") \
+                or git(eff, "config", "remote.pushDefault") \
+                or git(eff, "config", f"branch.{current}.remote") or "origin"
             configured = git(eff, "config", "--get-all", f"remote.{remote}.push")
             if configured:
                 for spec in configured.splitlines():
