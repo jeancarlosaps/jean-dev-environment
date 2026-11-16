@@ -55,6 +55,13 @@ case "$1 ${2:-}" in
   api\ repos/*/rules/branches/*)
     flag rules_error && { echo "HTTP 404" >&2; exit 1; }
     jq '.rules' "$f" ;;
+  api\ repos/*/protection/required_pull_request_reviews)
+    flag classic_forbidden && { echo "gh: Not Found (HTTP 404)" >&2; exit 1; }
+    flag classic_error && { echo "gh: Bad Gateway (HTTP 502)" >&2; exit 1; }
+    jq -r '.classic_reviews // 0' "$f" ;;
+  api\ repos/*/branches/*)
+    flag branch_error && { echo "gh: Bad Gateway (HTTP 502)" >&2; exit 1; }
+    jq -r '.classic_enabled // false' "$f" ;;
   *)
     exit 1 ;;
 esac
@@ -209,45 +216,69 @@ scenario '.rules_error = true'
 gate "falha ao ler rulesets: erro de coleta" 2 "rulesets" - "${R[@]}"
 gate "sem -R explícito: erro de uso" 2 "owner/repo explícito" - 42
 
+
+# --- gate: exigência do servidor --------------------------------------
+scenario '.classic_enabled = true | .classic_reviews = 3'
+gate "proteção clássica legível com mínimo 3: BLOCKER" 1 "exigidas 3 (servidor: 3" - "${R[@]}"
+scenario '.classic_enabled = true | .classic_forbidden = true'
+gate "proteção clássica ilegível sem admin: WARNING" 0 "mínimo de aprovações não legível sem admin" "BLOCKER |" "${R[@]}"
+scenario '.classic_enabled = true | .classic_error = true'
+gate "erro ao ler proteção clássica: erro de coleta" 2 "proteção clássica" - "${R[@]}"
+scenario '.branch_error = true'
+gate "erro ao ler a branch base: erro de coleta" 2 "proteção de dev" - "${R[@]}"
+scenario '.pr_view.reviewDecision = "REVIEW_REQUIRED"'
+gate "GitHub com REVIEW_REQUIRED: BLOCKER" 1 "MG-SERVER" - "${R[@]}"
+
 # --- guard: Claude Code -----------------------------------------------
+H=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+M="--match-head-commit $H"
 scenario '.'
 guard "comando comum: sem decisão" --claude none - "git status"
 guard "leitura de PR: sem decisão" --claude none - "gh pr view 42 -R acme/app --json mergeable,mergeCommit"
 guard "busca por PRs mergeados: sem decisão" --claude none - "gh pr list -R acme/app --search is:merged"
 guard "git merge-base: sem decisão" --claude none - "git merge-base HEAD origin/dev"
-guard "duas aprovações e CI verde: ask, nunca allow" --claude ask "Isto não é autorização" "gh pr merge 42 -R acme/app --squash --match-head-commit aaaaaaaa"
-guard "forma URL é avaliada" --claude ask "acme/app#42" "gh pr merge https://github.com/acme/app/pull/42 --merge"
-guard "--repo= é avaliado" --claude ask - "gh pr merge 42 --repo=acme/app"
-guard "auto-merge é avaliado como merge" --claude ask - "gh pr merge 42 -R acme/app --auto --squash"
-guard "HEAD divergente: deny" --claude deny "difere do validado" "gh pr merge 42 -R acme/app --match-head-commit cccccccc"
+guard "duas aprovações e CI verde: ask, nunca allow" --claude ask "Isto não é autorização" "gh pr merge 42 -R acme/app --squash $M"
+guard "forma URL é avaliada" --claude ask "acme/app#42" "gh pr merge https://github.com/acme/app/pull/42 --merge $M"
+guard "--repo= é avaliado" --claude ask - "gh pr merge 42 --repo=acme/app $M"
+guard "auto-merge é avaliado como merge" --claude ask - "gh pr merge 42 -R acme/app --auto --squash $M"
+guard "corpo com espaços e número não confunde o PR" --claude ask "acme/app#42" "gh pr merge -b \"fix 7\" 42 -R acme/app $M"
+guard "-R dentro do corpo não troca o repositório" --claude ask "acme/app#42" "gh pr merge 42 -R acme/app --body \"-R other/lib harmless\" $M"
+guard "HEAD divergente: deny" --claude deny "difere do validado" "gh pr merge 42 -R acme/app --match-head-commit cccccccccccccccccccccccccccccccccccccccc"
+guard "sem --match-head-commit: deny" --claude deny "sem --match-head-commit" "gh pr merge 42 -R acme/app --squash"
+guard "SHA abreviado: deny" --claude deny "sem --match-head-commit" "gh pr merge 42 -R acme/app --match-head-commit aaaaaaaa"
+guard "merge via API REST com sha: avaliado" --claude ask "acme/app#42" "gh api -X PUT repos/acme/app/pulls/42/merge -f merge_method=squash -f sha=$H"
+guard "merge via API REST sem sha: deny" --claude deny "sha=<sha completo>" "gh api -X PUT repos/acme/app/pulls/42/merge -f merge_method=squash"
+guard "merge via API com --input: deny" --claude deny "--input" "gh api -X PUT repos/acme/app/pulls/42/merge --input body.json"
+guard "opção desconhecida no merge: deny" --claude deny "opção desconhecida --foo" "gh pr merge 42 -R acme/app --foo $M"
 
 scenario '.pr_view.reviews |= .[:1]'
-guard "uma aprovação e CI verde: deny" --claude deny "MG-APPROVALS" "gh pr merge 42 -R acme/app --squash"
-guard "merge via API REST: avaliado e deny" --claude deny "MG-APPROVALS" "gh api -X PUT repos/acme/app/pulls/42/merge -f merge_method=squash"
-guard "sem -R: deny" --claude deny "repositório não explícito" "gh pr merge 42"
-guard "GH_REPO no ambiente não substitui -R: deny" --claude deny "repositório não explícito" "GH_REPO=acme/app gh pr merge 42"
-guard "sem número: deny" --claude deny "PR não identificado" "gh pr merge -R acme/app"
-guard "--admin: deny" --claude deny "contorna a proteção" "gh pr merge 42 -R acme/app --admin"
-guard "dois merges no mesmo comando: deny" --claude deny "mais de um merge" "gh pr merge 41 -R acme/app && gh pr merge 42 -R acme/app"
-guard "dois merges em linhas separadas: deny" --claude deny "mais de um merge" "$(printf 'gh pr merge 41 -R acme/app\ngh pr merge 42 -R acme/app')"
-guard "texto solto no corpo: deny por ambiguidade" --claude deny "ambíguos" "gh pr merge -b \"fix 7\" 42 -R acme/app"
-guard "gh por caminho absoluto é avaliado" --claude deny "MG-APPROVALS" "/opt/homebrew/bin/gh pr merge 42 -R acme/app"
+guard "uma aprovação e CI verde: deny" --claude deny "MG-APPROVALS" "gh pr merge 42 -R acme/app --squash $M"
+guard "sem -R: deny" --claude deny "repositório não explícito" "gh pr merge 42 $M"
+guard "GH_REPO no ambiente não substitui -R: deny" --claude deny "repositório não explícito" "GH_REPO=acme/app gh pr merge 42 $M"
+guard "sem número: deny" --claude deny "PR não identificado" "gh pr merge -R acme/app $M"
+guard "--admin: deny" --claude deny "contorna a proteção" "gh pr merge 42 -R acme/app --admin $M"
+guard "--admin=true: deny" --claude deny "contorna a proteção" "gh pr merge 42 -R acme/app --admin=true $M"
+guard "dois merges no mesmo comando: deny" --claude deny "mais de um merge" "gh pr merge 41 -R acme/app $M && gh pr merge 42 -R acme/app $M"
+guard "dois merges em linhas separadas: deny" --claude deny "mais de um merge" "$(printf 'gh pr merge 41 -R acme/app %s\ngh pr merge 42 -R acme/app %s' "$M" "$M")"
+guard "gh por caminho absoluto é avaliado" --claude deny "MG-APPROVALS" "/opt/homebrew/bin/gh pr merge 42 -R acme/app $M"
 
 # --- guard: execução indireta -----------------------------------------
-guard "dentro de bash -c é avaliado" --claude deny "MG-APPROVALS" "bash -c \"gh pr merge 42 -R acme/app\""
-guard "dentro de sh -lc é avaliado" --claude deny "MG-APPROVALS" "sh -lc 'gh pr merge 42 -R acme/app'"
-guard "env gh é avaliado" --claude deny "MG-APPROVALS" "env GH_DEBUG=1 gh pr merge 42 -R acme/app"
-guard "eval é avaliado" --claude deny "MG-APPROVALS" "eval gh pr merge 42 -R acme/app"
-guard "encadeado após cd é avaliado" --claude deny "MG-APPROVALS" "cd /tmp && gh pr merge 42 -R acme/app"
-guard "xargs sem número explícito: deny" --claude deny "PR não identificado" "echo 42 | xargs gh pr merge -R acme/app"
-guard "subshell \$(...): deny" --claude deny "forma não reconhecida" 'echo $(gh pr merge 42 -R acme/app)'
-guard "crase: deny" --claude deny "forma não reconhecida" 'echo `gh pr merge 42 -R acme/app`'
-guard "merge legítimo + merge escondido: deny" --claude deny "forma não reconhecida" 'gh pr merge 42 -R acme/app; X=$(gh pr merge 43 -R acme/app)'
+guard "dentro de bash -c é avaliado" --claude deny "MG-APPROVALS" "bash -c \"gh pr merge 42 -R acme/app $M\""
+guard "dentro de sh -lc é avaliado" --claude deny "MG-APPROVALS" "sh -lc 'gh pr merge 42 -R acme/app $M'"
+guard "env gh é avaliado" --claude deny "MG-APPROVALS" "env GH_DEBUG=1 gh pr merge 42 -R acme/app $M"
+guard "eval é avaliado" --claude deny "MG-APPROVALS" "eval gh pr merge 42 -R acme/app $M"
+guard "encadeado após cd é avaliado" --claude deny "MG-APPROVALS" "cd /tmp && gh pr merge 42 -R acme/app $M"
+guard "subshell \$(...) é avaliado como merge" --claude deny "MG-APPROVALS" "echo \$(gh pr merge 42 -R acme/app $M)"
+guard "xargs sem número explícito: deny" --claude deny "PR não identificado" "echo 42 | xargs gh pr merge -R acme/app $M"
+guard "crase: deny" --claude deny "forma não reconhecida" "echo \`gh pr merge 42 -R acme/app $M\`"
+guard "subshell entre aspas: deny" --claude deny "forma não reconhecida" "echo \"\$(gh pr merge 42 -R acme/app $M)\""
+guard "merge legítimo + merge escondido: deny" --claude deny "mais de um merge" "gh pr merge 42 -R acme/app $M; X=\$(gh pr merge 43 -R acme/app)"
 guard "variável no lugar do gh: deny" --claude deny "forma não reconhecida" 'G=gh; $G pr merge 42 -R acme/app'
 guard "python -c com lista de argumentos: deny" --claude deny "forma não reconhecida" "python3 -c 'import subprocess; subprocess.run([\"gh\", \"pr\", \"merge\", \"42\"])'"
 guard "GraphQL mergePullRequest: deny" --claude deny "forma não reconhecida" "gh api graphql -f query='mutation { mergePullRequest(input: {pullRequestId: \"x\"}) { clientMutationId } }'"
 guard "GraphQL auto-merge: deny" --claude deny "forma não reconhecida" "gh api graphql -f query='mutation { enablePullRequestAutoMerge(input: {}) { clientMutationId } }'"
 guard "curl no endpoint de merge: deny" --claude deny "forma não reconhecida" "curl -X PUT https://api.github.com/repos/acme/app/pulls/42/merge"
+guard "aspas desbalanceadas com merge: deny" --claude deny "não tokenizável" "gh pr merge 42 -R acme/app \"$M"
 printf '#!/bin/sh\ngh pr merge 42 -R acme/app\n' > "$work/m.sh"
 guard "script em arquivo executado direto: deny" --claude deny "script ./m.sh" "./m.sh" "$work"
 guard "script em arquivo via bash: deny" --claude deny "script m.sh" "bash m.sh" "$work"
@@ -256,50 +287,66 @@ guard "script python em arquivo: deny" --claude deny "script m.py" "python3 m.py
 scenario '.aliases = "pm: pr merge\nco: pr checkout"'
 guard "alias do gh que faz merge: deny" --claude deny "alias do gh 'pm'" "gh pm 42 -R acme/app"
 guard "alias do gh sem merge: sem decisão" --claude none - "gh co 42 -R acme/app"
+guard "criar alias de merge: deny" --claude deny "forma não reconhecida" "gh alias set pm 'pr merge'"
 guard "desligar hooks pelo shell: deny" --claude deny "disableAllHooks" "echo '{\"disableAllHooks\": true}' > .claude/settings.local.json"
 guard "desligar hooks com jq: deny" --claude deny "disableAllHooks" "jq '.disableAllHooks = true' s.json > t && mv t s.json"
-guard "criar alias de merge: deny" --claude deny "forma não reconhecida" "gh alias set pm 'pr merge'"
+guard "--no-verify em commit: deny" --claude deny "no-verify" "git commit --no-verify -m 'feat: x'"
+guard "--no-verify em push: deny" --claude deny "no-verify" "git push --no-verify origin feat/x"
+
+# --- guard: falsos positivos de texto livre ---------------------------
+guard "mensagem de commit citando pr merge: sem decisão" --claude none - "git commit -m 'corrige o pr merge do gate'"
+guard "comentário citando pr merge: sem decisão" --claude none - "gh pr comment 5 -R acme/app -b \"vou fazer o pr merge depois\""
+guard "título citando pr merge: sem decisão" --claude none - "gh pr create -R acme/app --title \"pr merge gate\" --body x"
+guard "mensagem com substituição de comando: deny" --claude deny "forma não reconhecida" "git commit -m \"\$(gh pr merge 1 -R acme/app)\""
+guard "repositório terminado em pr não gera falso merge" --claude none - "gh pr view 5 -R acme/xpr --json merged"
 
 # --- guard: exceção de aprovações -------------------------------------
 scenario '.pr_view.reviews |= .[:1]'
 before=$(osa_calls)
-guard "texto MERGE_GATE_EXCEPTION no comando não concede exceção" --claude deny "não confirmada no diálogo" "MERGE_GATE_EXCEPTION=autorizado gh pr merge 42 -R acme/app"
-guard "texto de exceção com espaços: deny" --claude deny - "MERGE_GATE_EXCEPTION='autorizado após alinhamento técnico' gh pr merge 42 -R acme/app"
+guard "texto MERGE_GATE_EXCEPTION no comando não concede exceção" --claude deny "não confirmada no diálogo" "MERGE_GATE_EXCEPTION=autorizado gh pr merge 42 -R acme/app $M"
+guard "texto de exceção com espaços: deny" --claude deny "não confirmada no diálogo" "MERGE_GATE_EXCEPTION='autorizado após alinhamento técnico' gh pr merge 42 -R acme/app $M"
 OSA_SHIM_REPLY="button returned:Autorizar exceção, text returned:42, gave up:false" \
-  guard "exceção confirmada no diálogo com o número do PR: ask" --claude ask "EXCEÇÃO de aprovações confirmada" "gh pr merge 42 -R acme/app"
+  guard "exceção confirmada no diálogo com o número do PR: ask" --claude ask "EXCEÇÃO de aprovações confirmada" "gh pr merge 42 -R acme/app $M"
 if grep -q "acme/app#42" "$XDG_STATE_HOME/merge-guard/exceptions.log" 2>/dev/null; then ok "exceção confirmada fica registrada"; else out=""; fail "exceção confirmada fica registrada" "sem registro"; fi
 OSA_SHIM_REPLY="button returned:Autorizar exceção, text returned:41, gave up:false" \
-  guard "diálogo com número errado: deny" --claude deny "não confirmada" "gh pr merge 42 -R acme/app"
+  guard "diálogo com número errado: deny" --claude deny "não confirmada" "gh pr merge 42 -R acme/app $M"
 OSA_SHIM_REPLY="button returned:Autorizar exceção, text returned:42, gave up:true" \
-  guard "diálogo expirado: deny" --claude deny "não confirmada" "gh pr merge 42 -R acme/app"
+  guard "diálogo expirado: deny" --claude deny "não confirmada" "gh pr merge 42 -R acme/app $M"
 OSA_SHIM_REPLY="button returned:Recusar, text returned:42, gave up:false" \
-  guard "diálogo recusado: deny" --claude deny "não confirmada" "gh pr merge 42 -R acme/app"
+  guard "diálogo recusado: deny" --claude deny "não confirmada" "gh pr merge 42 -R acme/app $M"
 after=$(osa_calls)
-if [ "$after" -eq $((before + 5)) ]; then ok "diálogo aberto uma vez por tentativa elegível"; else out=""; fail "diálogo aberto uma vez por tentativa elegível" "$before -> $after"; fi
+if [ "$after" -eq $((before + 6)) ]; then ok "diálogo aberto uma vez por tentativa elegível"; else out=""; fail "diálogo aberto uma vez por tentativa elegível" "$before -> $after"; fi
 
 before=$(osa_calls)
 OSA_SHIM_REPLY="button returned:Autorizar exceção, text returned:42, gave up:false" MERGE_GATE_POLICY_FILE="$work/policy-sem-excecao.tsv" \
-  guard "política sem regra de exceção: deny sem diálogo" --claude deny "MG-APPROVALS" "gh pr merge 42 -R acme/app"
+  guard "política sem regra de exceção: deny sem diálogo" --claude deny "MG-APPROVALS" "gh pr merge 42 -R acme/app $M"
 scenario '.pr_view.reviews |= .[:1] | .threads.data.repository.pullRequest.reviewThreads = {"totalCount":1,"nodes":[{"isResolved":false,"path":"a","line":1}]}'
 OSA_SHIM_REPLY="button returned:Autorizar exceção, text returned:42, gave up:false" \
-  guard "outro BLOCKER além das aprovações: deny sem diálogo" --claude deny "MG-THREADS" "gh pr merge 42 -R acme/app"
+  guard "outro BLOCKER além das aprovações: deny sem diálogo" --claude deny "MG-THREADS" "gh pr merge 42 -R acme/app $M"
 scenario '.pr_view.reviews = []'
 OSA_SHIM_REPLY="button returned:Autorizar exceção, text returned:42, gave up:false" \
-  guard "abaixo do mínimo do servidor: deny sem diálogo" --claude deny "MG-APPROVALS" "gh pr merge 42 -R acme/app"
+  guard "abaixo do mínimo do servidor: deny sem diálogo" --claude deny "MG-APPROVALS" "gh pr merge 42 -R acme/app $M"
+scenario '.pr_view.reviews |= .[:1] | .pr_view.reviewDecision = "REVIEW_REQUIRED"'
+OSA_SHIM_REPLY="button returned:Autorizar exceção, text returned:42, gave up:false" \
+  guard "servidor com REVIEW_REQUIRED: deny sem diálogo" --claude deny "MG-SERVER" "gh pr merge 42 -R acme/app $M"
 if [ "$(osa_calls)" -eq "$before" ]; then ok "diálogo não abre fora da elegibilidade"; else out=""; fail "diálogo não abre fora da elegibilidade" "osascript chamado"; fi
 
 # --- guard: falha segura ----------------------------------------------
 scenario '.pr_view_error = true'
-guard "gate sem coleta: deny" --claude deny "não concluiu a avaliação" "gh pr merge 42 -R acme/app"
+guard "gate sem coleta: deny" --claude deny "não concluiu a avaliação" "gh pr merge 42 -R acme/app $M"
 scenario '.checks_error = true'
-guard "erro ao ler checks: deny" --claude deny "não concluiu a avaliação" "gh pr merge 42 -R acme/app"
+guard "erro ao ler checks: deny" --claude deny "não concluiu a avaliação" "gh pr merge 42 -R acme/app $M"
 scenario '.'
-MERGE_GATE_POLICY_FILE= guard "política não configurada: deny" --claude deny "MG-POLICY" "gh pr merge 42 -R acme/app"
-MERGE_GATE_POLICY_FILE="$work/nao-existe.tsv" guard "arquivo de política ausente: deny" --claude deny "inexistente ou ilegível" "gh pr merge 42 -R acme/app"
+MERGE_GATE_POLICY_FILE= guard "política não configurada: deny" --claude deny "MG-POLICY" "gh pr merge 42 -R acme/app $M"
+MERGE_GATE_POLICY_FILE="$work/nao-existe.tsv" guard "arquivo de política ausente: deny" --claude deny "inexistente ou ilegível" "gh pr merge 42 -R acme/app $M"
 mkdir -p "$work/sem-gate"
-cp "$GUARD" "$work/sem-gate/merge-guard.sh"
-guard "gate ausente: deny" --claude deny "gate ausente" "gh pr merge 42 -R acme/app" "$work" "$work/sem-gate/merge-guard.sh"
+cp "$GUARD" "$ROOT/scripts/merge-guard-parse.py" "$work/sem-gate/"
+guard "gate ausente: deny" --claude deny "gate ausente" "gh pr merge 42 -R acme/app $M" "$work" "$work/sem-gate/merge-guard.sh"
 guard "gate ausente não afeta comando comum" --claude none - "ls" "$work" "$work/sem-gate/merge-guard.sh"
+mkdir -p "$work/sem-parser"
+cp "$GUARD" "$GATE" "$work/sem-parser/"
+guard "parser ausente: deny para merge" --claude deny "parser indisponível" "gh pr merge 42 -R acme/app $M" "$work" "$work/sem-parser/merge-guard.sh"
+guard "parser ausente não afeta comando comum" --claude none - "ls" "$work" "$work/sem-parser/merge-guard.sh"
 
 # --- guard: push em branch oficial ------------------------------------
 repo="$work/repo"
@@ -312,12 +359,35 @@ guard "push com HEAD na branch epic: ask" --claude ask "epic/ABC-1" "git push -u
 guard "push de branch de trabalho: sem decisão" --claude none - "git push -u origin feat/ABC-1" "$repo"
 guard "push de tag: sem decisão" --claude none - "git push origin refs/tags/v1.0.0" "$repo"
 guard "branch com nome parecido: sem decisão" --claude none - "git push origin feat/dev-tools" "$repo"
+guard "push --all: ask" --claude ask "push em massa" "git push origin --all" "$repo"
+guard "push --mirror: ask" --claude ask "push em massa" "git push --mirror origin" "$repo"
+guard "refspec com curinga: ask" --claude ask "curinga" "git push origin 'refs/heads/*:refs/heads/*'" "$repo"
+guard "remoção de branch oficial: ask" --claude ask "'dev'" "git push origin :dev" "$repo"
+repo_main="$work/repo-main"
+git init -q "$repo_main"
+git -C "$repo_main" symbolic-ref HEAD refs/heads/main
+repo_feat="$work/repo-feat"
+git init -q "$repo_feat"
+git -C "$repo_feat" checkout -q -b feat/x
+guard "git -C resolve HEAD no repositório certo: ask" --claude ask "'main'" "git -C ../repo-main push origin HEAD" "$repo_feat"
+guard "branch de trabalho sem upstream: sem decisão" --claude none - "git push" "$repo_feat"
+git -C "$repo_feat" config push.default upstream
+git -C "$repo_feat" config branch.feat/x.remote origin
+git -C "$repo_feat" config branch.feat/x.merge refs/heads/dev
+guard "push.default=upstream com upstream dev: ask" --claude ask "'dev'" "git push" "$repo_feat"
+git -C "$repo_feat" config --unset branch.feat/x.merge
+git -C "$repo_feat" config remote.origin.push refs/heads/feat/x:refs/heads/main
+guard "remote.origin.push para main: ask" --claude ask "'main'" "git push" "$repo_feat"
+guard "--git-dir: ask" --claude ask "git-dir" "git --git-dir=/tmp/x.git push origin feat/x" "$repo_feat"
+scenario '.'
+guard "push oficial e merge no mesmo comando: deny" --claude deny "no mesmo comando" "git push origin HEAD:dev && gh pr merge 42 -R acme/app $M" "$repo"
+guard "push oficial e merge com --admin: deny" --claude deny - "git push origin HEAD:dev && gh pr merge 42 -R acme/app --admin $M" "$repo"
 
 # --- guard: Cursor ----------------------------------------------------
 scenario '.'
-guard "Cursor: duas aprovações: ask" --cursor ask "Isto não é autorização" "gh pr merge 42 -R acme/app"
+guard "Cursor: duas aprovações: ask" --cursor ask "Isto não é autorização" "gh pr merge 42 -R acme/app $M"
 scenario '.pr_view.reviews |= .[:1]'
-guard "Cursor: uma aprovação: deny" --cursor deny "MG-APPROVALS" "gh pr merge 42 -R acme/app"
+guard "Cursor: uma aprovação: deny" --cursor deny "MG-APPROVALS" "gh pr merge 42 -R acme/app $M"
 guard "Cursor: comando comum: sem decisão" --cursor none - "ls -la"
 
 # --- invariantes globais ----------------------------------------------

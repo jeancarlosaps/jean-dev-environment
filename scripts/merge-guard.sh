@@ -7,22 +7,29 @@
 #   Claude Code: PreToolUse, matcher "Bash"   → merge-guard.sh --claude
 #   Cursor:      beforeShellExecution          → merge-guard.sh --cursor
 #
-# Lê o JSON do hook no stdin e decide só para comandos que integram
-# código numa branch:
-#   - gh pr merge (inclusive --auto), gh api .../pulls/<n>/merge;
+# Lê o JSON do hook no stdin. O comando é analisado por
+# scripts/merge-guard-parse.py (tokenização com aspas preservadas) e o
+# hook decide só para comandos que integram código numa branch:
+#   - gh pr merge (inclusive --auto) e gh api .../pulls/<n>/merge;
 #   - git push com destino em branch oficial (main, master, dev,
-#     develop, release/*, epic/*, project/*).
+#     develop, release/*, epic/*, project/*) ou destino indeterminado.
 # Qualquer outro comando sai sem decisão: o fluxo normal de permissões
 # do agente continua valendo.
 #
 # Decisões possíveis: deny ou ask. Este hook nunca concede permissão:
 # CI verde e aprovações suficientes viram "ask", e a confirmação humana
-# no prompt do agente é a autorização do merge.
+# no prompt do agente é a autorização do merge. Toda condição de deny é
+# avaliada antes de qualquer ask.
 #
-# Falha segura (deny): política ausente, gate ausente, erro de leitura
-# do GitHub, jq ausente, PR não identificado, forma de merge não
-# reconhecida (texto que parece merge e não foi identificado: GraphQL,
-# HTTP direto, alias do gh, script em arquivo, subshell).
+# Merge exige HEAD fixado com SHA completo: --match-head-commit <sha>
+# no gh pr merge, ou -f sha=<sha> no endpoint REST. Assim o GitHub
+# recusa o merge se o PR mudar entre a avaliação e a execução.
+#
+# Falha segura (deny): política ausente, gate ou parser ausentes, erro
+# de leitura do GitHub, jq ou python3 ausentes, PR ou HEAD não
+# identificados, forma de merge não avaliável (GraphQL, HTTP direto,
+# alias do gh, script em arquivo, texto em subshell), --admin em
+# qualquer forma, --no-verify, merge e push no mesmo comando.
 #
 # Exceção de aprovações: só quando a política do repositório prevê uma
 # regra de exceção (4ª coluna do TSV) e o único BLOCKER é o número de
@@ -49,9 +56,10 @@ set -f
 
 SCRIPT_DIR=$(cd -P "$(dirname "$0")" && pwd)
 GATE="$SCRIPT_DIR/merge-gate.sh"
-OFFICIAL_RE='^(refs/heads/)?(main|master|dev|develop|release/.+|epic/.+|project/.+)$'
-MERGE_LIKE_RE='pr[^A-Za-z0-9]{1,8}merge([^A-Za-z0-9-]|$)|pulls/[^[:space:]]*/merge([^A-Za-z0-9_]|$)|mergePullRequest|enablePullRequestAutoMerge'
+PARSER="$SCRIPT_DIR/merge-guard-parse.py"
+OFFICIAL_RE='^(main|master|dev|develop|release/.+|epic/.+|project/.+)$'
 EXCEPTION_LOG="${XDG_STATE_HOME:-$HOME/.local/state}/merge-guard/exceptions.log"
+UNRECOGNIZED="use um merge por comando: gh pr merge <n> -R owner/repo --match-head-commit <sha completo>"
 
 mode="${1:-}"
 case "$mode" in --claude|--cursor) ;; *) echo "uso: merge-guard.sh --claude|--cursor" >&2; exit 2 ;; esac
@@ -82,20 +90,28 @@ decide() {
   exit 0
 }
 
-if ! command -v jq >/dev/null 2>&1; then
-  case "$input" in
-    *merge*|*push*) decide deny "merge-guard: jq ausente; operação de integração bloqueada" ;;
+# Sem jq não há como separar o comando do restante do evento: o teste
+# usa o JSON inteiro (mais conservador).
+if command -v jq >/dev/null 2>&1; then
+  if [ "$mode" = --claude ]; then
+    command_line=$(printf '%s' "$input" | jq -r '.tool_input.command // empty' 2>/dev/null)
+  else
+    command_line=$(printf '%s' "$input" | jq -r '.command // empty' 2>/dev/null)
+  fi
+  cwd=$(printf '%s' "$input" | jq -r '.cwd // empty' 2>/dev/null)
+else
+  command_line="$input" cwd=""
+fi
+[ -n "$command_line" ] || exit 0
+
+# Sem jq, python3 ou parser não há leitura confiável do comando: nega o
+# que pode integrar código e deixa o resto seguir.
+if ! command -v jq >/dev/null 2>&1 || ! command -v python3 >/dev/null 2>&1 || [ ! -r "$PARSER" ]; then
+  case "$command_line" in
+    *merge*|*push*|*disableAllHooks*) decide deny "merge-guard: jq, python3 ou o parser indisponível; operação de integração bloqueada" ;;
     *) exit 0 ;;
   esac
 fi
-
-if [ "$mode" = --claude ]; then
-  command_line=$(printf '%s' "$input" | jq -r '.tool_input.command // empty' 2>/dev/null)
-else
-  command_line=$(printf '%s' "$input" | jq -r '.command // empty' 2>/dev/null)
-fi
-cwd=$(printf '%s' "$input" | jq -r '.cwd // empty' 2>/dev/null)
-[ -n "$command_line" ] || exit 0
 
 # Desligar hooks pelo shell desliga este guard. A edição do mesmo
 # arquivo pelas ferramentas de edição do agente não passa por aqui.
@@ -103,170 +119,75 @@ case "$command_line" in
   *disableAllHooks*) decide deny "merge-guard: comando altera disableAllHooks; desligar hooks exige ação humana direta" ;;
 esac
 
-# file_mentions_merge <arquivo>: script local que contém merge.
-file_mentions_merge() {
-  local f="$1"
-  case "$f" in /*) ;; *) [ -n "$cwd" ] && f="$cwd/$f" ;; esac
-  [ -f "$f" ] && [ -r "$f" ] || return 1
-  # -I: binário (ex.: o próprio executável do gh) não é script
-  grep -IqE "$MERGE_LIKE_RE" "$f" 2>/dev/null
-}
-
-# alias_is_merge <nome>: alias do gh cuja expansão faz merge.
-alias_is_merge() {
-  command -v gh >/dev/null 2>&1 || return 1
-  gh alias list 2>/dev/null | awk -F': ' -v n="$1" '$1 == n { print $2 }' | grep -qE "$MERGE_LIKE_RE|merge"
-}
-
-# Divide o comando em segmentos (;, &&, ||, |, &, quebra de linha).
-# Aspas não são interpretadas: texto citado também é avaliado (falso
-# positivo seguro).
-segments=$(printf '%s\n' "$command_line" | awk '{ gsub(/&&|\|\||[;|&]/, "\n"); print }')
-
-pr_number="" pr_repo="" head_sha="" kind="" admin=0 push_targets=""
-merges=0 ambiguous=0 indirect=""
-
-while IFS= read -r seg; do
-  seg=$(printf '%s' "$seg" | tr -d "\"'\\\\")
-  # shellcheck disable=SC2086
-  set -- $seg
-  while [ $# -gt 0 ]; do
-    case "$1" in [A-Za-z_]*=*) shift; continue ;; esac
-    case "${1##*/}" in
-      env|command|exec|eval|sudo|nohup|time|xargs|builtin|nice) shift ;;
-      bash|sh|zsh|dash|ksh|source|.) shift; while [ $# -gt 0 ] && [ "${1#-}" != "$1" ]; do shift; done ;;
-      '('|'{'|'$('|'`') shift ;;
-      *) break ;;
-    esac
-  done
-  [ $# -gt 0 ] || continue
-
-  # script local executado diretamente ou por interpretador
-  case "${1##*/}" in
-    python|python3|node|ruby|perl|osascript)
-      [ $# -gt 1 ] && file_mentions_merge "$2" && indirect="script $2" ;;
-    *)
-      file_mentions_merge "$1" && indirect="script $1" ;;
+analysis=$(GUARD_CMD="$command_line" GUARD_CWD="$cwd" python3 "$PARSER" 2>/dev/null)
+if ! printf '%s' "$analysis" | jq -e '.merges and .pushes' >/dev/null 2>&1; then
+  case "$command_line" in
+    *merge*|*push*) decide deny "merge-guard: análise do comando falhou; operação de integração bloqueada" ;;
+    *) exit 0 ;;
   esac
+fi
 
-  case "${1##*/}" in
-    gh)
-      shift
-      repo_flag="" rest=""
-      while [ $# -gt 0 ]; do
-        case "$1" in
-          -R|--repo) repo_flag="${2:-}"; shift 2 ;;
-          --repo=*) repo_flag="${1#--repo=}"; shift ;;
-          *) rest="$rest $1"; shift ;;
-        esac
-      done
-      # shellcheck disable=SC2086
-      set -- $rest
-      case "${1:-}" in
-        pr|api|repo|issue|run|workflow|release|auth|alias|search|browse|status|label|secret|variable|cache|codespace|gist|org|project|ruleset|attestation|config|extension|gpg-key|ssh-key|completion|help|version|"") ;;
-        *) alias_is_merge "$1" && indirect="alias do gh '$1'" ;;
-      esac
-      if [ "${1:-}" = pr ] && [ "${2:-}" = merge ]; then
-        kind=pr; merges=$((merges + 1)); shift 2
-        while [ $# -gt 0 ]; do
-          case "$1" in
-            --admin) admin=1; shift ;;
-            --match-head-commit) head_sha="${2:-}"; shift 2 ;;
-            --match-head-commit=*) head_sha="${1#*=}"; shift ;;
-            -t|--subject|-b|--body|-F|--body-file|-A|--author-email) shift 2 ;;
-            -*) shift ;;
-            *)
-              [ -z "$pr_number" ] || ambiguous=1
-              case "$1" in
-                https://github.com/*/pull/*)
-                  pr_repo=$(printf '%s' "$1" | sed -E 's#https://github.com/([^/]+/[^/]+)/pull/.*#\1#')
-                  pr_number=$(printf '%s' "$1" | sed -E 's#.*/pull/([0-9]+).*#\1#') ;;
-                *) pr_number="$1" ;;
-              esac
-              shift ;;
-          esac
-        done
-        [ -n "$pr_repo" ] || pr_repo="$repo_flag"
-      elif [ "${1:-}" = api ]; then
-        api_path=$(printf '%s' "$seg" | grep -oE 'repos/[^/ ]+/[^/ ]+/pulls/[0-9]+/merge([^A-Za-z_]|$)' | head -1)
-        if [ -n "$api_path" ]; then
-          kind=pr; merges=$((merges + 1))
-          pr_repo=$(printf '%s' "$api_path" | cut -d/ -f2-3)
-          pr_number=$(printf '%s' "$api_path" | cut -d/ -f5)
-        fi
-      fi
-      ;;
-    git)
-      shift
-      while [ $# -gt 0 ]; do
-        case "$1" in -C|-c) shift 2 ;; -*) shift ;; *) break ;; esac
-      done
-      [ "${1:-}" = push ] || continue
-      shift
-      positional=""
-      while [ $# -gt 0 ]; do
-        case "$1" in
-          --tags|--follow-tags) shift ;;
-          -o|--push-option|--repo|--receive-pack|--exec) shift 2 ;;
-          -*) shift ;;
-          *) positional="$positional $1"; shift ;;
-        esac
-      done
-      # shellcheck disable=SC2086
-      set -- $positional
-      [ $# -gt 0 ] && shift   # remote
-      if [ $# -eq 0 ]; then
-        branch=""
-        if [ -n "$cwd" ] && [ -d "$cwd" ]; then
-          branch=$(git -C "$cwd" symbolic-ref --short -q HEAD 2>/dev/null || true)
-        fi
-        [ -n "$branch" ] && push_targets="$push_targets $branch"
-      else
-        for spec in "$@"; do
-          spec=${spec#+}
-          dst=${spec##*:}
-          [ -n "$dst" ] || continue
-          [ "$dst" = HEAD ] && [ -n "$cwd" ] && dst=$(git -C "$cwd" symbolic-ref --short -q HEAD 2>/dev/null || echo HEAD)
-          push_targets="$push_targets $dst"
-        done
-      fi
-      ;;
+field() { printf '%s' "$analysis" | jq -r "$1"; }
+
+parse_error=$(field '.error')
+if [ -n "$parse_error" ]; then
+  case "$command_line" in
+    *merge*|*push*) decide deny "merge-guard: $parse_error; operação de integração bloqueada" ;;
+    *) exit 0 ;;
   esac
-done <<EOF
-$segments
-EOF
+fi
 
-UNRECOGNIZED="use um merge por comando: gh pr merge <n> -R owner/repo --match-head-commit <sha>"
+[ "$(field '.no_verify')" = false ] || decide deny "merge-guard: --no-verify é proibido; hook bloqueou: diagnosticar, não contornar"
 
+indirect=$(field '.indirect | join(", ")')
 [ -z "$indirect" ] || decide deny "merge-guard: merge por $indirect não é avaliável; $UNRECOGNIZED"
 
-# Toda ocorrência com cara de merge no texto precisa ser um merge
-# identificado acima; sobra = forma não reconhecida.
-hits=$(printf '%s\n' "$command_line" | grep -oE "$MERGE_LIKE_RE" | wc -l | tr -d ' ')
+merges=$(field '.merges | length')
+hits=$(field '.hits')
 [ "$hits" -le "$merges" ] || decide deny "merge-guard: comando de merge em forma não reconhecida (GraphQL, HTTP, subshell ou texto); $UNRECOGNIZED"
+[ "$merges" -le 1 ] || decide deny "merge-guard: mais de um merge no mesmo comando; $UNRECOGNIZED"
 
-for dst in $push_targets; do
-  case "$dst" in refs/tags/*) continue ;; esac
+# Destinos de push: oficial ou indeterminado pede confirmação.
+push_note=""
+unresolved=$(field '[.pushes[].unresolved[]] | join(", ")')
+[ -z "$unresolved" ] || push_note="push com destino não determinado ($unresolved)"
+for dst in $(field '.pushes[].targets[]'); do
+  [ -z "$push_note" ] || break
   if printf '%s\n' "$dst" | grep -qE "$OFFICIAL_RE"; then
-    decide ask "merge-guard: push direto para a branch oficial '$dst'. Branch oficial só recebe código via PR; confirme apenas com autorização humana expressa para esta operação (ex.: criação da branch)."
+    push_note="push direto para a branch oficial '$dst'"
+    break
   fi
 done
 
-[ "$kind" = pr ] || exit 0
+if [ "$merges" -eq 0 ]; then
+  [ -z "$push_note" ] || decide ask "merge-guard: $push_note. Branch oficial só recebe código via PR; confirme apenas com autorização humana expressa para esta operação (ex.: criação da branch)."
+  exit 0
+fi
 
-[ "$merges" -le 1 ] || decide deny "merge-guard: mais de um merge no mesmo comando; $UNRECOGNIZED"
-[ "$ambiguous" -eq 0 ] || decide deny "merge-guard: argumentos ambíguos para identificar o PR; passe o corpo por --body-file e $UNRECOGNIZED"
-[ "$admin" -eq 0 ] || decide deny "merge-guard: --admin contorna a proteção do repositório; bypass exige autorização e execução humana direta"
+[ -z "$push_note" ] || decide deny "merge-guard: merge e $push_note no mesmo comando; execute cada operação separadamente"
+
+ambiguous=$(field '.merges[0].ambiguous | join(", ")')
+admin=$(field '.merges[0].admin')
+pr_number=$(field '.merges[0].number // empty')
+pr_repo=$(field '.merges[0].repo // empty')
+head_sha=$(field '.merges[0].head // empty')
+via=$(field '.merges[0].via')
+
+[ "$admin" = false ] || decide deny "merge-guard: --admin contorna a proteção do repositório; bypass exige autorização e execução humana direta"
+[ -z "$ambiguous" ] || decide deny "merge-guard: argumentos do merge não determináveis ($ambiguous); $UNRECOGNIZED"
 case "$pr_number" in ''|*[!0-9]*) decide deny "merge-guard: PR não identificado; $UNRECOGNIZED" ;; esac
 case "$pr_repo" in */*) ;; *) decide deny "merge-guard: repositório não explícito; $UNRECOGNIZED" ;; esac
+if ! printf '%s\n' "$head_sha" | grep -qE '^[0-9a-f]{40}$'; then
+  if [ "$via" = "gh api" ]; then
+    decide deny "merge-guard: merge via API sem -f sha=<sha completo>; o HEAD avaliado precisa ser fixado"
+  fi
+  decide deny "merge-guard: merge sem --match-head-commit <sha completo>; o HEAD avaliado precisa ser fixado"
+fi
 
 [ -r "$GATE" ] || decide deny "merge-guard: gate ausente em $GATE; merge bloqueado"
 
-set -- "$pr_number" -R "$pr_repo" --format json
-[ -n "$head_sha" ] && set -- "$@" --expect-head "$head_sha"
-
 gate_err=$(mktemp "${TMPDIR:-/tmp}/merge-guard.XXXXXX")
-report=$(bash "$GATE" "$@" 2>"$gate_err")
+report=$(bash "$GATE" "$pr_number" -R "$pr_repo" --expect-head "$head_sha" --format json 2>"$gate_err")
 status=$?
 gate_msg=$(tail -1 "$gate_err" 2>/dev/null)
 rm -f "$gate_err"
@@ -279,7 +200,7 @@ summary=$(printf '%s' "$report" | jq -r '
   + ([.findings[] | select(.severity != "INFO") | "[\(.severity)] \(.rule): \(.evidence)"] | join(" | "))')
 AUTH_NOTE="Isto não é autorização: confirme só com autorização humana expressa para o merge deste PR neste HEAD."
 
-# confirm_exception: diálogo nativo; ecoa "ok" só com o número do PR
+# confirm_exception: diálogo nativo; sucesso só com o número do PR
 # digitado e o botão de autorização, sem timeout.
 confirm_exception() {
   local rule="$1" text answer

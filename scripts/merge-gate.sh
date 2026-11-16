@@ -87,7 +87,7 @@ owner=${repo%%/*}
 name=${repo#*/}
 
 pr_json=$(gh pr view "$number" -R "$repo" --json \
-  number,url,state,isDraft,baseRefName,headRefOid,mergeable,mergeStateStatus,reviews \
+  number,url,state,isDraft,baseRefName,headRefOid,mergeable,mergeStateStatus,reviewDecision,reviews \
   2>/dev/null) || die "não foi possível ler o PR $repo#$number"
 printf '%s' "$pr_json" | jq -e '.headRefOid and .baseRefName and (.reviews | type == "array")' >/dev/null 2>&1 \
   || die "resposta inesperada ao ler o PR $repo#$number"
@@ -127,6 +127,24 @@ rules_json=$(gh api "repos/$repo/rules/branches/$base_uri" 2>/dev/null) \
 printf '%s' "$rules_json" | jq -e 'type == "array"' >/dev/null 2>&1 \
   || die "resposta inesperada ao ler os rulesets de $base"
 
+# Proteção clássica: o mínimo de aprovações só é legível com admin. Sem
+# leitura, o reviewDecision do GitHub continua refletindo a exigência.
+classic_count="" classic_unknown=false
+classic_enabled=$(gh api "repos/$repo/branches/$base_uri" --jq '.protection.enabled // false' 2>/dev/null) \
+  || die "não foi possível ler a proteção de $base"
+if [ "$classic_enabled" = true ]; then
+  err=$(mktemp "${TMPDIR:-/tmp}/merge-gate.XXXXXX")
+  if classic_count=$(gh api "repos/$repo/branches/$base_uri/protection/required_pull_request_reviews" \
+      --jq '.required_approving_review_count // 0' 2>"$err"); then
+    :
+  elif grep -qE 'HTTP 40[34]' "$err"; then
+    classic_count="" classic_unknown=true
+  else
+    rm -f "$err"; die "não foi possível ler a proteção clássica de $base"
+  fi
+  rm -f "$err"
+fi
+
 # ---------------------------------------------------------------------
 # Avaliação
 # ---------------------------------------------------------------------
@@ -141,13 +159,16 @@ report=$(jq -n \
   --arg policy_source "$policy_source" \
   --arg policy_exception "$policy_exception" \
   --arg policy_file "$POLICY_FILE" \
+  --arg classic_count "$classic_count" \
+  --arg classic_unknown "$classic_unknown" \
   --arg expect_head "$expect_head" \
   --arg expect_base "$expect_base" '
   def f(sev; rule; evidence; rec): {severity: sev, rule: rule, evidence: evidence, recommendation: rec};
   def short: .[0:10];
 
   ($pr.headRefOid) as $head
-  | (([$rules[] | select(.type == "pull_request") | .parameters.required_approving_review_count // 0] | max) // 0) as $server
+  | ((([$rules[] | select(.type == "pull_request") | .parameters.required_approving_review_count // 0] | max) // 0) as $rules_min
+     | [$rules_min, (if $classic_count == "" then 0 else ($classic_count | tonumber) end)] | max) as $server
   | (if $policy_min == "" then null else ($policy_min | tonumber) end) as $policy
   | ([$server, $policy // 0] | max) as $needed
   | ($pr.reviews
@@ -187,6 +208,10 @@ report=$(jq -n \
        else empty end),
       (if ($stale | length) > 0 and ($valid | length) >= $needed then
          f("INFO"; "MG-APPROVALS"; "aprovação em commit antigo ignorada: \($stale | join(", "))"; "nenhuma") else empty end),
+      (if $pr.reviewDecision == "REVIEW_REQUIRED" then
+         f("BLOCKER"; "MG-SERVER"; "o GitHub informa REVIEW_REQUIRED: a exigência de revisão do servidor não foi atendida"; "obter as aprovações exigidas pelo repositório") else empty end),
+      (if $classic_unknown == "true" then
+         f("WARNING"; "MG-SERVER"; "proteção clássica ativa em \($pr.baseRefName); mínimo de aprovações não legível sem admin"; "o reviewDecision do GitHub cobre a exigência; confirmar o mínimo com quem administra o repositório") else empty end),
       (if ($changes | length) > 0 then f("BLOCKER"; "MG-CHANGES"; "CHANGES_REQUESTED vigente: \($changes | join(", "))"; "atender e pedir re-review") else empty end),
       (if $rt.totalCount > ($rt.nodes | length) then
          f("BLOCKER"; "MG-THREADS"; "\($rt.totalCount) threads, só \($rt.nodes | length) lidas"; "conferir as threads manualmente") else empty end),
