@@ -1,0 +1,15 @@
+# merge-policy.tsv — mínimo de aprovações válidas no HEAD por repositório
+# ---------------------------------------------------------------------
+# Exemplo. A política real fica fora deste repositório, no local que o
+# time define, e é passada ao gate por MERGE_GATE_POLICY_FILE.
+# Colunas separadas por TAB:
+#   1. padrão (glob bash sobre owner/repo)
+#   2. mínimo de aprovações válidas no HEAD
+#   3. origem da política
+#   4. regra de exceção ao mínimo (opcional). Vazia: sem exceção.
+#      Com regra, o merge-guard pode oferecer a exceção por diálogo
+#      humano quando o único bloqueio é o número de aprovações.
+# O primeiro padrão que casar vale. Sem padrão, vale só o que o servidor
+# declara (rulesets do branch de destino). O exigido é sempre o maior
+# entre a política e o servidor. Arquivo só com comentários é válido.
+example-org/*	2	Política de exemplo	autorização expressa do responsável técnico
