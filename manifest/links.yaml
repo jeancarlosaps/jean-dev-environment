@@ -52,3 +52,7 @@ machine:
     - source: ai/shared/.claude/CLAUDE.md
       target: .claude/CLAUDE.md
       conflict: skip
+    # ~/.claude/skills também é lido pelo Cursor como skill do usuário
+    - source: ai/shared/skills/pre-pr-audit
+      target: .claude/skills/pre-pr-audit
+      conflict: skip

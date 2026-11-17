@@ -165,7 +165,7 @@ O `init` é idempotente e faz:
 5. avisa se um `core.excludesfile` legado anula esse ignore;
 6. adiciona `dev-env/bin` ao `PATH` (bloco delimitado no `~/.zshrc`);
 7. aponta o `core.hooksPath` global para `git/hooks` (AI Guard);
-8. cria os links da máquina declarados em `machine:` no manifesto (hoje `~/.claude/CLAUDE.md`), sem substituir arquivo seu, e remove links gerenciados que saíram do manifesto;
+8. cria os links da máquina declarados em `machine:` no manifesto (hoje `~/.claude/CLAUDE.md` e `~/.claude/skills/pre-pr-audit`), sem substituir arquivo seu, e remove links gerenciados que saíram do manifesto;
 9. autoriza este repositório a versionar os próprios artefatos de IA.
 
 Abra um novo shell e o comando `dev-env` fica disponível de qualquer lugar.
@@ -290,6 +290,9 @@ machine:                        # aplicado pelo `dev-env init`, uma vez por máq
     - source: ai/shared/.claude/CLAUDE.md
       target: .claude/CLAUDE.md # relativo ao $HOME
       conflict: skip            # arquivo seu nunca é substituído
+    - source: ai/shared/skills/pre-pr-audit
+      target: .claude/skills/pre-pr-audit
+      conflict: skip
 ```
 
 - `source` é relativo à raiz do `dev-env`; `target` é relativo à raiz do projeto (perfis) ou ao `$HOME` (`machine:`).
@@ -334,7 +337,9 @@ Limites opcionais: `DEV_STORAGE_OK_GIB` (20),
 `DEV_STORAGE_WARN_GIB` (10), `DEV_STORAGE_CRIT_GIB`.
 
 Auditoria do diff da branch antes do PR (somente leitura; procedimento e
-regras em [`ai/shared/skills/pre-pr-audit/SKILL.md`](ai/shared/skills/pre-pr-audit/SKILL.md)):
+regras em [`ai/shared/skills/pre-pr-audit/SKILL.md`](ai/shared/skills/pre-pr-audit/SKILL.md)). O `init` liga a
+skill em `~/.claude/skills/pre-pr-audit`, lido como skill do usuário pelo Claude Code e pelo Cursor; o
+`SKILL.md` continua num lugar só:
 
 ```bash
 python3 scripts/pre-pr-audit.py --repo <repositório> --base <base>
