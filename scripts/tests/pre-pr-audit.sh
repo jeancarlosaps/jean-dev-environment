@@ -121,6 +121,14 @@ if jq -e '.findings[] | select(.rule == "SWIFT-AVAILABILITY") | select(.file == 
   ok "disponibilidade aponta arquivo e linha"; else fail "disponibilidade aponta arquivo e linha" "local errado"; fi
 expect_evidence "disponibilidade cita iOS e macOS" SWIFT-AVAILABILITY "ios 16+ (alvo 15)"
 expect_status "deployment target violado: status 1" 1
+mkdir -p "$repo/Tests/Fixtures/Sample/Sources"
+printf 'func sample() async throws {\n    try await Task.sleep(for: .seconds(1))\n}\n' > "$repo/Tests/Fixtures/Sample/Sources/Sample.swift"
+printf '// swift-tools-version:5.7\nimport PackageDescription\nlet package = Package(name: "Sample", platforms: [.iOS(.v12)])\n' > "$repo/Tests/Fixtures/Sample/Package.swift"
+g add -A; g commit -q -m fixture
+run
+expect_count "código em diretório de fixtures não é auditado pela camada Swift" SWIFT-AVAILABILITY "" 1
+if jq -e 'any(.verified[]; contains("ios 15"))' "$work/out.json" >/dev/null; then
+  ok "Package.swift de fixture não define o deployment target"; else fail "Package.swift de fixture" "alvo lido da fixture"; fi
 
 # --- 9: testes ausentes --------------------------------------------------
 build tests-missing; run

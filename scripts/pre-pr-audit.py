@@ -53,7 +53,8 @@ class Context:
                 continue
             f["added"] = gitdiff.added_lines(self.repo, self.merge_base, f["path"]) if f["status"] != "D" else []
             self.files.append(f)
-        self.swift_files = [f for f in self.files if f["path"].endswith(".swift") and f["status"] != "D"]
+        self.swift_files = [f for f in self.files if f["path"].endswith(".swift") and f["status"] != "D"
+                            and not core.is_fixture_path(f["path"])]
         self.head_files = gitdiff.tracked_files(self.repo, "HEAD")
         self.old_files = gitdiff.tracked_files(self.repo, self.merge_base)
         self.uncommitted = gitdiff.uncommitted(self.repo)

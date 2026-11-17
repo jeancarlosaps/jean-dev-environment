@@ -129,7 +129,7 @@ def deployment_targets(read_head, tracked, policy):
     targets, origin = {}, {}
     for key, value in (policy.get("min_platforms") or {}).items():
         targets[key.lower()] = parse_version(str(value)); origin[key.lower()] = "política"
-    manifests = [p for p in tracked if os.path.basename(p) == "Package.swift"]
+    manifests = [p for p in tracked if os.path.basename(p) == "Package.swift" and not is_fixture_path(p)]
     for path in manifests:
         text = clean(read_head(path) or "")
         for name, key in PLATFORMS.items():
@@ -139,7 +139,7 @@ def deployment_targets(read_head, tracked, policy):
                     if key not in targets or version < targets[key]:
                         targets[key], origin[key] = version, path
     for path in tracked:
-        if path.endswith("project.pbxproj"):
+        if path.endswith("project.pbxproj") and not is_fixture_path(path):
             text = read_head(path) or ""
             for setting, key in (("IPHONEOS", "ios"), ("MACOSX", "macos"), ("TVOS", "tvos"), ("WATCHOS", "watchos")):
                 for match in re.finditer(setting + r"_DEPLOYMENT_TARGET = ([\d.]+);", text):
@@ -310,7 +310,8 @@ def is_library(read_head, tracked, policy):
     if "library" in policy:
         return bool(policy["library"])
     for path in tracked:
-        if os.path.basename(path) == "Package.swift" and ".library(" in (read_head(path) or ""):
+        if os.path.basename(path) == "Package.swift" and not is_fixture_path(path) \
+                and ".library(" in (read_head(path) or ""):
             return True
     return False
 
