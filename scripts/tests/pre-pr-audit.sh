@@ -673,6 +673,91 @@ expect_count "CodingKeys removida com encode/decode explícito: INFO" SWIFT-CONT
 pair_case "Sources/Shop/Item.swift" "$item_before" 'public struct Other {}'
 expect_count "tipo removido: sem achado de contrato (a remoção é de API)" SWIFT-CONTRACT-KEYS "" 0
 
+# --- visibilidade efetiva (apontamento anterior não coberto) ------------
+pair_case "Sources/Shop/Hidden.swift" 'struct Hidden {}
+extension Hidden: Equatable {}' 'struct Hidden {}'
+expect_count "conformidade removida de struct interna: sem achado" SWIFT-API-BREAK "" 0
+pair_case "Sources/Shop/Hidden.swift" 'struct Hidden {
+    public func f() {}
+}' 'struct Hidden {
+}'
+expect_count "membro public de struct interna removido: sem achado" SWIFT-API-BREAK "" 0
+pair_case "Sources/Shop/Hidden.swift" 'public struct Outer {
+    struct Inner {
+        public func f() {}
+    }
+}' 'public struct Outer {
+    struct Inner {
+    }
+}'
+expect_count "membro public de tipo aninhado interno removido: sem achado" SWIFT-API-BREAK "" 0
+pair_case "Sources/Shop/Hidden.swift" 'public struct Visible {}
+protocol Tagged {}
+extension Visible: Tagged {}' 'public struct Visible {}
+protocol Tagged {}'
+expect_count "conformidade de tipo público a protocolo interno removida: sem achado" SWIFT-API-BREAK "" 0
+pair_case "Sources/Shop/Hidden.swift" 'public struct Visible {
+    public func f() {}
+}' 'struct Visible {
+}'
+expect_count "tipo público que vira interno: tipo e membro continuam BLOCKER" SWIFT-API-BREAK BLOCKER 2
+pair_case "Sources/Shop/Ext.swift" 'extension String {
+    public func shout() -> String { self }
+}' 'extension String {
+}'
+expect_count "membro public em extensão de tipo de outro módulo removido: BLOCKER" SWIFT-API-BREAK BLOCKER 1
+pair_case "Sources/Shop/Pk.swift" 'package struct Pk {
+    public func f() {}
+}' 'package struct Pk {
+}'
+expect_count "membro public de tipo package removido: WARNING, não BLOCKER" SWIFT-API-BREAK WARNING 1
+expect_evidence "visibilidade incerta explica o motivo" SWIFT-API-BREAK "Pk tem acesso package"
+
+# extensões em outro arquivo
+vis_files() {  # vis_files <tipo base> <extensão base> <extensão head|->
+  build pipeline-unified
+  printf '%s\n' "$1" > "$repo/Sources/Shop/VisType.swift"; printf '%s\n' "$2" > "$repo/Sources/Shop/VisExt.swift"
+  g add -A; g commit -q -m vis-base; g branch -f main HEAD
+  if [ "$3" = - ]; then g rm -q Sources/Shop/VisExt.swift; else printf '%s\n' "$3" > "$repo/Sources/Shop/VisExt.swift"; g add -A; fi
+  g commit -q -m vis-change; run
+}
+vis_files 'struct Hidden {}' 'extension Hidden: Equatable {
+    public func g() {}
+}' -
+expect_count "extensão de tipo interno em outro arquivo removida: sem achado" SWIFT-API-BREAK "" 0
+vis_files 'struct Hidden {}' 'extension Hidden {
+    public func g() {}
+}' 'extension Hidden {
+}'
+expect_count "membro public de extensão de tipo interno em outro arquivo: sem achado" SWIFT-API-BREAK "" 0
+vis_files 'public struct Visible {}' 'extension Visible: Equatable {}' -
+expect_count "conformidade de tipo público em outro arquivo removida: BLOCKER" SWIFT-API-BREAK BLOCKER 1
+vis_files 'public struct Visible {}' 'extension Visible {
+    public func g() {}
+}' 'extension Visible {
+}'
+expect_count "membro public de extensão de tipo público em outro arquivo: BLOCKER" SWIFT-API-BREAK BLOCKER 1
+vis_files 'public enum Outer {
+    struct Inner {}
+}' 'extension Outer.Inner {
+    public func g() {}
+}' 'extension Outer.Inner {
+}'
+expect_count "extensão de tipo aninhado interno em outro arquivo: sem achado" SWIFT-API-BREAK "" 0
+
+# homônimo público e interno em targets diferentes: visibilidade incerta
+build pipeline-unified
+printf '// swift-tools-version:5.7\nimport PackageDescription\nlet package = Package(name: "Shop", platforms: [.iOS(.v15)], products: [.library(name: "Shop", targets: ["Shop", "Other"])], targets: [.target(name: "Shop"), .target(name: "Other")])\n' > "$repo/Package.swift"
+mkdir -p "$repo/Sources/Other"
+printf 'public struct Twin {}\n' > "$repo/Sources/Shop/Twin.swift"
+printf 'struct Twin {}\nextension Twin: Equatable {}\n' > "$repo/Sources/Other/Twin.swift"
+g add -A; g commit -q -m twins; g branch -f main HEAD
+printf 'struct Twin {}\n' > "$repo/Sources/Other/Twin.swift"; g add -A; g commit -q -m twins-change
+run
+expect_count "homônimo público e interno: WARNING, não BLOCKER" SWIFT-API-BREAK WARNING 1
+expect_count "homônimo público e interno: nenhum BLOCKER" SWIFT-API-BREAK BLOCKER 0
+expect_evidence "visibilidade incerta cita o tipo ambíguo" SWIFT-API-BREAK "Twin tem declarações com visibilidades diferentes"
+
 # R8: falha ao gravar --output
 build pipeline-unified
 for target in "$work/nao/existe/out.json" "$work"; do
