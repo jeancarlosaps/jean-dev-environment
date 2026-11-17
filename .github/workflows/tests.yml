@@ -27,3 +27,5 @@ jobs:
         run: bash scripts/tests/storage-audit.sh
       - name: hooks do git
         run: bash git/hooks/tests/pre-push-range.sh
+      - name: pre-pr-audit
+        run: bash scripts/tests/pre-pr-audit.sh
