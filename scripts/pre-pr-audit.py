@@ -152,14 +152,6 @@ def main(argv=None):
 
     try:
         ctx = Context(args)
-    except gitdiff.GitError as exc:
-        print(f"pre-pr-audit: {exc}", file=sys.stderr)
-        return 2
-    except Exception as exc:  # erro interno nunca vira relatório vazio nem status de achado
-        print(f"pre-pr-audit: erro interno: {type(exc).__name__}: {exc}", file=sys.stderr)
-        return 2
-
-    try:
         audit = audit_diff(ctx)
         text = report.as_json(ctx, audit) if args.format == "json" else report.as_markdown(ctx, audit)
     except gitdiff.GitError as exc:
