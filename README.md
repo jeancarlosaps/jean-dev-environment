@@ -333,6 +333,13 @@ Diagnóstico somente leitura:
 Limites opcionais: `DEV_STORAGE_OK_GIB` (20),
 `DEV_STORAGE_WARN_GIB` (10), `DEV_STORAGE_CRIT_GIB`.
 
+Auditoria do diff da branch antes do PR (somente leitura; procedimento e
+regras em [`ai/shared/skills/pre-pr-audit/SKILL.md`](ai/shared/skills/pre-pr-audit/SKILL.md)):
+
+```bash
+python3 scripts/pre-pr-audit.py --repo <repositório> --base <base>
+```
+
 <a id="ai-guard"></a>
 
 ## 07 · Segurança e hooks
@@ -402,6 +409,7 @@ jean-dev-environment/            (= ~/Developer/dev-env)
 │   ├── .agents  _bmad           # placeholders, fora do perfil default
 │   ├── mcp/                     # configurações de MCP (vazio)
 │   ├── prompts  snippets  templates
+│   ├── skills/pre-pr-audit/     # skill de auditoria pré-PR (SKILL.md)
 │   └── knowledge  docs          # knowledge/engineering-learnings.md
 ├── bootstrap/                   # implementação do CLI (comandos + libs)
 ├── git/hooks/                   # AI Guard (core.hooksPath global)
