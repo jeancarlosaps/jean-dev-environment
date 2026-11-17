@@ -154,6 +154,9 @@ gate "aprovação do último push exigida e presente no HEAD" 0 - "MG-LAST-PUSH"
 scenario '.classic_enabled = true | .classic_reviews_line = "x y z"'
 gate "proteção clássica com resposta inesperada: erro" 2 "resposta inesperada da proteção clássica" - "${R[@]}"
 
+scenario '.classic_enabled = true | .classic_reviews_line = "1 t ruefalse"'
+gate "proteção clássica com booleano inválido: erro" 2 "resposta inesperada da proteção clássica" - "${R[@]}"
+
 scenario '.pr_view.reviews += [{"author":{"login":"reviewer-c"},"state":"CHANGES_REQUESTED","submittedAt":"2026-11-16T12:00:00Z","commit":{"oid":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}]'
 gate "CHANGES_REQUESTED vigente: BLOCKER" 1 "MG-CHANGES" - "${R[@]}"
 

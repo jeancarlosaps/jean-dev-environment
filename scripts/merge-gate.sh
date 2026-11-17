@@ -148,10 +148,12 @@ EOF_CLASSIC
     case "$classic_count:$classic_dismiss:$classic_last_push" in
       *[!0-9]*:*:* | :*) rm -f "$err"; die "resposta inesperada da proteção clássica de $base" ;;
     esac
-    case "$classic_dismiss$classic_last_push" in
-      truetrue|truefalse|falsetrue|falsefalse) ;;
-      *) rm -f "$err"; die "resposta inesperada da proteção clássica de $base" ;;
-    esac
+    for flag in "$classic_dismiss" "$classic_last_push"; do
+      case "$flag" in
+        true|false) ;;
+        *) rm -f "$err"; die "resposta inesperada da proteção clássica de $base" ;;
+      esac
+    done
   elif grep -qE 'HTTP 40[34]' "$err"; then
     classic_count="" classic_unknown=true
   else
