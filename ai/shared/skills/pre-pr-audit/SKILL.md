@@ -156,6 +156,17 @@ módulo não substitui a API removida. Se algum dos lados não pertence a
 target declarado (projeto Xcode, diretório solto), o resultado é
 `SWIFT-API-ORIGIN-UNKNOWN`, nunca BLOCKER.
 
+### Visibilidade efetiva
+
+Só entra na comparação o que é visível fora do módulo: membro ou
+conformidade dentro de tipo interno (inclusive aninhado) não é API, e a
+conformidade só é pública se o tipo e o protocolo forem. Extensões são
+resolvidas pelo tipo estendido, mesmo declarado em outro arquivo; tipo que
+o projeto não declara vem de outro módulo e é público lá. Homônimos com
+acessos diferentes, acesso `package` ou tipo fora dos arquivos lidos
+deixam a visibilidade incerta: a remoção vira `SWIFT-API-BREAK` WARNING,
+com o motivo na evidência, nunca BLOCKER.
+
 ## 5. Limites
 
 - Erro de leitura do git, política ou evidência inválida, caminho com quebra

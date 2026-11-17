@@ -47,7 +47,7 @@ DECL = re.compile(
     r"(?P<access>public|open)\s+"
     r"(?:(?:final|static|class|override|mutating|nonmutating|convenience|required|dynamic|lazy|weak|unowned|indirect|nonisolated|async|private\(set\)|internal\(set\)|fileprivate\(set\))\s+)*"
     r"(?P<kind>func|init|var|let|subscript|class|struct|enum|protocol|typealias|actor|case)\b(?P<rest>.*)$")
-TYPE_DECL = re.compile(r"^\s*(?:@[A-Za-z_]+(?:\([^)]*\))?\s+)*(?:(?:public|open|internal|fileprivate|private|final|indirect)\s+)*"
+TYPE_DECL = re.compile(r"^\s*(?:@[A-Za-z_]+(?:\([^)]*\))?\s+)*(?:(?:public|open|package|internal|fileprivate|private|final|indirect)\s+)*"
                        r"(?P<kind>class|struct|enum|protocol|actor|extension)\s+(?P<name>[A-Za-z_][\w.]*)"
                        r"(?:\s*<[^>{]*>)?(?:\s*:\s*(?P<inherits>[^{]+?))?\s*(?:where\b[^{]*)?\{")
 PROTOCOL_MEMBER = re.compile(r"^\s*(?:@[A-Za-z_]+(?:\([^)]*\))?\s+)*(?:(?:static|class|mutating|nonmutating|nonisolated|async)\s+)*"
@@ -499,15 +499,52 @@ MEMBER = re.compile(
 EXPLICIT_ACCESS = re.compile(r"^\s*(?:@[A-Za-z_]+(?:\([^)]*\))?\s+)*(?:\w+\s+)*?(public|open|internal|fileprivate|private|package)\b")
 
 
+def type_access(prefix):
+    """Acesso declarado antes de class/struct/extension: public, package ou
+    internal (inclui fileprivate/private e a ausência de modificador)."""
+    match = re.search(r"\b(public|open|package|internal|fileprivate|private)\b", prefix)
+    if not match:
+        return None
+    return {"open": "public", "public": "public", "package": "package"}.get(match.group(1), "internal")
+
+
+def protocol_name(conformance):
+    return re.sub(r"<.*", "", re.sub(r"^(?:@\w+\s+)+", "", conformance)).strip()
+
+
+def scope_of(stack):
+    """(oculta, tipos de que a visibilidade depende, dúvida) para o que está
+    declarado dentro da pilha de tipos e extensões."""
+    needs, doubt = [], None
+    for frame in stack:
+        if frame["access"] == "internal":
+            return True, (), None
+        if frame["access"] == "package":
+            doubt = f"{frame['qualified']} tem acesso package"
+        needs.extend(frame["needs"])
+    return False, tuple(needs), doubt
+
+
 def public_api(text):
-    """{chave: (linha, deprecated)} da API pública: declarações public/open,
-    conformidades, requisitos de protocolo público, membros sem modificador
-    de public extension e cases de public enum. Só membros diretos do tipo
-    entram (nada declarado dentro de funções)."""
+    """(api, tipos) do arquivo.
+
+    api: {chave: (linha, deprecated, dependências, dúvida)} das declarações
+    public/open, conformidades, requisitos de protocolo público, membros sem
+    modificador de public extension e cases de public enum. Só membros
+    diretos do tipo entram (nada declarado dentro de funções), e nada dentro
+    de tipo interno. Dependências são os tipos estendidos e protocolos cuja
+    visibilidade está em outro ponto do projeto (resolvidas por visibility).
+    tipos: {nome qualificado: [(acesso efetivo, dependências)]}."""
     code = clean(text)
     lines = code.split("\n")
-    api, stack, depth = {}, [], 0
+    api, types, stack, depth = {}, {}, [], 0
     pending_deprecated = False
+
+    def record(key, line_number, deprecated, frames, extra=()):
+        hidden, needs, doubt = scope_of(frames)
+        if not hidden:
+            api[key] = (line_number, deprecated, needs + tuple(extra), doubt)
+
     i = 0
     while i < len(lines):
         line = lines[i]
@@ -515,13 +552,13 @@ def public_api(text):
         if re.search(r"@available\s*\(\s*\*\s*,\s*deprecated", line):
             pending_deprecated = True
         type_match = TYPE_DECL.match(line)
-        owner = ".".join(name for name, _, _, _ in stack) or "<global>"
-        direct = not stack or line_depth == stack[-1][2] + 1
+        owner = ".".join(frame["name"] for frame in stack) or "<global>"
+        direct = not stack or line_depth == stack[-1]["depth"] + 1
         decl = DECL.match(line) if direct else None
         container = stack[-1] if stack else None
         implicit = None
-        if direct and container and container[3] and not type_match and not decl:
-            kind_c = container[1]
+        if direct and container and container["exposes"] and not type_match and not decl:
+            kind_c = container["kind"]
             member = MEMBER.match(line)
             if member and not EXPLICIT_ACCESS.match(line):
                 if kind_c in ("protocol", "extension") and member.group("kind") != "case":
@@ -543,27 +580,39 @@ def public_api(text):
                 for case in split_top(rest.split("{")[0]):
                     case = split_top(case, "=")[0]  # valor bruto não é parte da API de chamada
                     if case.strip():
-                        api[f"{owner}.case {tidy(case)}"] = (i + 1, pending_deprecated)
+                        record(f"{owner}.case {tidy(case)}", i + 1, pending_deprecated, stack)
             elif kind not in TYPE_KINDS:
-                api[member_key(owner, kind, rest, static)] = (i + 1, pending_deprecated)
-        if type_match and direct:
+                record(member_key(owner, kind, rest, static), i + 1, pending_deprecated, stack)
+        if type_match:
             name = type_match.group("name")
             kind = type_match.group("kind")
+            access = type_access(line[:type_match.start("kind")])
             if kind == "extension":
-                is_public = bool(re.search(r"\b(public|open)\s+extension\b", line))
+                # extensão adiciona membros ao tipo estendido, não a um tipo aninhado
+                frame = {"name": name, "qualified": name, "needs": (name,),
+                         "access": access if access in ("internal", "package") else "public",
+                         "exposes": access == "public"}
             else:
-                is_public = bool(decl)
-            if (is_public or kind == "extension") and type_match.group("inherits"):
-                for conformance in type_match.group("inherits").split(","):
-                    conformance = collapse(conformance)
-                    if conformance:
-                        api[f"conformidade {name}: {conformance}"] = (i + 1, False)
-            if decl and kind != "extension":
-                api[f"{owner}.{kind} {name}"] = (i + 1, pending_deprecated)
-            # extensão adiciona membros ao tipo estendido, não a um tipo aninhado
-            stack.append((name, kind, line_depth, is_public))
-        elif type_match:
-            stack.append((type_match.group("name"), type_match.group("kind"), line_depth, False))
+                parent = ".".join(f["name"] for f in stack)
+                frame = {"name": name, "qualified": f"{parent}.{name}" if parent else name, "needs": (),
+                         "access": access or "internal", "exposes": access == "public"}
+            frame.update(kind=kind, depth=line_depth)
+            if kind != "extension":
+                hidden, needs, doubt = scope_of(stack + [frame])
+                effective = "internal" if hidden else ("package" if doubt else "public")
+                types.setdefault(frame["qualified"], []).append((effective, needs))
+            if direct:
+                if type_match.group("inherits"):
+                    for conformance in type_match.group("inherits").split(","):
+                        conformance = collapse(conformance)
+                        if conformance:
+                            record(f"conformidade {name}: {conformance}", i + 1, False, stack + [frame],
+                                   [protocol_name(conformance)])
+                if decl and kind != "extension":
+                    record(f"{owner}.{kind} {name}", i + 1, pending_deprecated, stack)
+            else:
+                frame["access"] = "internal"  # tipo declarado dentro de função
+            stack.append(frame)
         if line.strip() and not line.strip().startswith("@"):
             pending_deprecated = False
         for ch in line:
@@ -571,10 +620,63 @@ def public_api(text):
                 depth += 1
             elif ch == "}":
                 depth -= 1
-                while stack and stack[-1][2] >= depth:
+                while stack and stack[-1]["depth"] >= depth:
                     stack.pop()
         i += 1
-    return api
+    return api, types
+
+
+def visibility(types, complete):
+    """Resolve a visibilidade efetiva de um nome de tipo ou protocolo:
+    ("pública" | "oculta" | "incerta", motivo).
+
+    Nome que nenhum arquivo Swift lido declara vem de outro módulo, e só é
+    referenciável se for público lá — desde que todos os arquivos tenham sido
+    lidos (complete). Declarações homônimas com acessos diferentes ou acesso
+    package não permitem conclusão."""
+    cache = {}
+
+    def resolve(name, seen=()):
+        if name in cache:
+            return cache[name]
+        if name in seen:
+            return "incerta", f"referência circular em {name}"
+        found = types.get(name)
+        if not found:
+            result = ("pública", None) if complete else ("incerta", f"{name} não está entre os arquivos lidos")
+        else:
+            outcomes = set()
+            for access, needs in found:
+                if access != "public":
+                    outcomes.add("oculta" if access == "internal" else "incerta")
+                else:
+                    outcomes.add(combine([resolve(n, seen + (name,)) for n in needs])[0])
+            if len(outcomes) == 1 and outcomes != {"incerta"}:
+                result = (outcomes.pop(), None)
+            else:
+                result = ("incerta", f"{name} tem declarações com visibilidades diferentes ou acesso package")
+        cache[name] = result
+        return result
+    return resolve
+
+
+def combine(results):
+    for state in ("oculta", "incerta"):
+        for result in results:
+            if result[0] == state:
+                return result
+    return "pública", None
+
+
+def effective_api(api, resolve):
+    """{chave: (linha, deprecated, dúvida)} só com o que é visível fora do
+    módulo ou não pôde ser descartado com confiança."""
+    result = {}
+    for key, (line, deprecated, needs, doubt) in api.items():
+        state, reason = combine([resolve(name) for name in needs])
+        if state != "oculta":
+            result[key] = (line, deprecated, doubt or reason)
+    return result
 
 
 def is_library(read_head, tracked, policy):
@@ -643,18 +745,36 @@ def check_public_api(audit, ctx, read_head, read_old):
         return
     library = is_library(read_head, ctx.head_files, ctx.policy)
     prefixes = module_map(read_head, ctx.head_files)
-    head_api = {}
     swift_head = [p for p in ctx.head_files if p.endswith(".swift") and not is_test_path(p) and not is_fixture_path(p)]
-    for path in swift_head[:3000]:
+    complete = len(swift_head) <= 3000
+    if not complete:
+        audit.skipped("API pública: mais de 3000 arquivos Swift; declarações movidas além desse limite não são encontradas "
+                      "e visibilidade de tipo não encontrado fica incerta")
+    head_parsed = {path: public_api(read_head(path) or "") for path in swift_head[:3000]}
+    touched = {f["path"] for f in ctx.files}
+    old_parsed = {f["old_path"]: public_api(read_old(f["old_path"]) or "") for f in ctx.files
+                  if f["status"] != "A" and f["old_path"].endswith(".swift")
+                  and not is_test_path(f["old_path"]) and not is_fixture_path(f["old_path"])}
+    # visibilidade na base: arquivos intocados são iguais nos dois lados
+    head_types, base_types = {}, {}
+    for path, (_, types) in head_parsed.items():
+        for index in (head_types, base_types) if path not in touched else (head_types,):
+            for name, entries in types.items():
+                index.setdefault(name, []).extend(entries)
+    for _, types in old_parsed.values():
+        for name, entries in types.items():
+            base_types.setdefault(name, []).extend(entries)
+    head_visible, base_visible = visibility(head_types, complete), visibility(base_types, complete)
+    head_api = {}
+    for path, (api, _) in head_parsed.items():
         module = module_for(path, prefixes)
-        for key, (line, deprecated) in public_api(read_head(path) or "").items():
+        for key, (line, deprecated, _) in effective_api(api, head_visible).items():
             head_api.setdefault(key, []).append((path, line, deprecated, module))
-    if len(swift_head) > 3000:
-        audit.skipped("API pública: mais de 3000 arquivos Swift; declarações movidas além desse limite não são encontradas")
     severity = "BLOCKER" if library else "WARNING"
     for f in changed:
-        old_api = public_api(read_old(f["old_path"]) or "")
-        new_api = public_api(read_head(f["path"]) or "") if f["status"] != "D" else {}
+        old_api = effective_api(old_parsed[f["old_path"]][0], base_visible)
+        new_api = effective_api((head_parsed.get(f["path"]) or public_api(read_head(f["path"]) or ""))[0],
+                                head_visible) if f["status"] != "D" else {}
         old_module = module_for(f["old_path"], prefixes)
         new_module = module_for(f["path"], prefixes)
         # arquivo renomeado só continua no mesmo módulo se ficou no mesmo diretório
@@ -662,7 +782,7 @@ def check_public_api(audit, ctx, read_head, read_old):
         stays = os.path.dirname(f["old_path"]) == os.path.dirname(f["path"]) or \
             (old_module is not None and old_module == new_module)
         file_module = old_module if stays else new_module
-        for key, (line, old_deprecated) in old_api.items():
+        for key, (line, old_deprecated, doubt) in old_api.items():
             same_file = [(f["path"], new_api[key][0], new_api[key][1], file_module)] if key in new_api else []
             exact = same_file or head_api.get(key, [])
             candidates = list(exact)
@@ -702,6 +822,13 @@ def check_public_api(audit, ctx, read_head, read_old):
             if candidates:  # só existe em outro módulo, conhecido
                 others = ", ".join(sorted({c[3].split(":")[-1] for c in candidates}))
                 what += f"; homônimo em outro módulo ({others}) não substitui"
+            if doubt:
+                audit.add(Finding(
+                    "SWIFT-API-BREAK", "WARNING", f"{what}: {key} (base, linha {line}); visibilidade efetiva incerta: {doubt}",
+                    "se o tipo for visível fora do módulo, quebra consumidores",
+                    "confirmar o acesso efetivo do tipo; se for público, manter a API antiga (delegando para a nova)",
+                    "heurística", "baixa", file=f["path"], line=None))
+                continue
             audit.add(Finding(
                 "SWIFT-API-BREAK", severity, f"{what}: {key} (base, linha {line})",
                 "quebra consumidores do módulo" if library else
@@ -712,7 +839,7 @@ def check_public_api(audit, ctx, read_head, read_old):
             continue
         protocols = {k.split(".protocol ")[1] for k in new_api if ".protocol " in k}
         head_text = None
-        for key, (line, _) in new_api.items():
+        for key, (line, _, _) in new_api.items():
             owner = key.split(".")[0]
             if key in old_api or owner not in protocols or key.startswith(owner + ".protocol"):
                 continue
