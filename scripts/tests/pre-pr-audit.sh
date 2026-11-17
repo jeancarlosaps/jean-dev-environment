@@ -473,6 +473,224 @@ for format in json md; do
 done
 expect_evidence "evidência de concorrência sem o literal" SWIFT-CONCURRENCY-UNSAFE "@unchecked Sendable"
 
+# --- quarto review -------------------------------------------------------
+pair_case() {  # pair_case <arquivo> <antes|-> <depois|->: main com "antes", feature com "depois"
+  build pipeline-unified
+  if [ "$2" != - ]; then mkdir -p "$repo/$(dirname "$1")"; printf '%s\n' "$2" > "$repo/$1"; fi
+  g add -A; g commit -q --allow-empty -m pair-base; g branch -f main HEAD
+  if [ "$3" = - ]; then g rm -q "$1"; else mkdir -p "$repo/$(dirname "$1")"; printf '%s\n' "$3" > "$repo/$1"; g add -A; fi
+  g commit -q -m pair-change
+  run
+}
+lines_of() {  # lines_of <regra> <arquivo>
+  jq -r --arg r "$1" --arg f "$2" '[.findings[] | select(.rule == $r and .file == $f) | .line] | map(tostring) | join(",")' "$work/out.json"
+}
+expect_lines() {  # expect_lines <label> <regra> <arquivo> <linhas>
+  local got; got=$(lines_of "$2" "$3")
+  if [ "$got" = "$4" ]; then ok "$1"; else fail "$1" "$2 em $3: linhas [$got], esperado [$4]"; fi
+}
+
+# R1: conteúdo adicionado começando com ++ não é cabeçalho
+token="gh""p_$(printf 'D%.0s' $(seq 1 36))"
+f1="Sources/Shop/Operadores Ação/Inc.swift"
+pair_case "$f1" 'var counter = 0
+--counter' "$(printf '++counter; let k = "%s"\nfunc w() async throws { try await Task.sleep(for: .seconds(1)) }\n+++counter' "$token")"
+expect_lines "linha adicionada começando com ++ é auditada (credencial)" CORE-SECRET "$f1" "1"
+expect_lines "numeração depois da linha ++ continua correta" SWIFT-AVAILABILITY "$f1" "2"
+for format in json md; do
+  if [ "$format" = md ]; then python3 "$AUDIT" --repo "$repo" --base main > "$work/out.md" 2>/dev/null || true; fi
+  if grep -q "${token:0:10}" "$work/out.$format"; then fail "credencial da linha ++ mascarada ($format)" "exposta"; else ok "credencial da linha ++ mascarada ($format)"; fi
+done
+pair_case "Sources/Shop/Plain.swift" 'let a = 1' 'let a = 1
+let b = 2'
+expect_count "diff comum continua com cabeçalhos tratados como cabeçalho" CORE-SECRET "" 0
+
+# R2: #available em qualquer posição da lista de condições
+f2="Sources/Shop/Cond.swift"
+pair_case "$f2" - 'func f(enabled: Bool, value: Int?) async throws {
+    if enabled, #available(iOS 16, macOS 13, *) {
+        try await Task.sleep(for: .seconds(1))
+    }
+    if let v = value,
+       v > 0,
+       #available(iOS 16, macOS 13, *) {
+        if v > 1 {
+            try await Task.sleep(for: .seconds(1))
+        }
+    }
+    guard enabled, #available(iOS 16, macOS 13, *) else { return }
+    try await Task.sleep(for: .seconds(1))
+}
+func g(running: Bool) async throws {
+    while running, #available(iOS 16, macOS 13, *) {
+        try await Task.sleep(for: .seconds(1))
+    }
+    if running, #available(iOS 16, macOS 13, *) {
+    }
+    try await Task.sleep(for: .seconds(1))
+}'
+expect_lines "#available depois de outras condições protege if, guard, while e bloco aninhado; uso fora do bloco não" SWIFT-AVAILABILITY "$f2" "21"
+
+# R3: @available protege só a declaração que o recebe
+f3="Sources/Shop/Attr.swift"
+pair_case "$f3" - '@available(iOS 16, macOS 13, *)
+typealias Clock = ContinuousClock
+func afterAlias() async throws {
+    try await Task.sleep(for: .seconds(1))
+}
+@available(iOS 16, macOS 13, *)
+@MainActor
+func protectedBody() async throws {
+    try await Task.sleep(for: .seconds(1))
+}
+@available(iOS 16, macOS 13, *)
+let stored = 1
+func afterStored() async throws {
+    try await Task.sleep(for: .seconds(1))
+}
+@available(iOS 16, macOS 13, *)
+var computed: Int {
+    _ = ContinuousClock()
+    return 1
+}
+@available(iOS 16, macOS 13, *)
+func split()
+    async throws
+{
+    try await Task.sleep(for: .seconds(1))
+}'
+expect_lines "proteção não vaza de typealias nem de propriedade armazenada; corpo, atributos múltiplos e assinatura em várias linhas protegem" SWIFT-AVAILABILITY "$f3" "4,14"
+
+# R4: public typealias
+pair_case "Sources/Shop/Alias.swift" 'public typealias ID = String' 'public typealias ID = Int'
+expect_count "typealias público com outro tipo: BLOCKER" SWIFT-API-BREAK BLOCKER 1
+pair_case "Sources/Shop/Alias.swift" 'public typealias ID = String' 'public typealias ID=String'
+expect_count "typealias só reformatado: sem achado" SWIFT-API-BREAK "" 0
+pair_case "Sources/Shop/Alias.swift" 'public typealias Handler<T> = (T) -> Void' 'public typealias Handler<T> = (T) throws -> Void'
+expect_count "typealias genérico com outro tipo: BLOCKER" SWIFT-API-BREAK BLOCKER 1
+pair_case "Sources/Shop/Alias.swift" 'public typealias Handler<T> = (T) -> Void' 'public typealias Handler<T> = ( T )->Void'
+expect_count "typealias genérico só reformatado: sem achado" SWIFT-API-BREAK "" 0
+
+# R5: estático × instância
+pair_case "Sources/Shop/Load.swift" 'public struct S {
+    public static func load() {}
+}' 'public struct S {
+    public func load() {}
+}'
+expect_count "static func vira método de instância: BLOCKER" SWIFT-API-BREAK BLOCKER 1
+pair_case "Sources/Shop/Load.swift" 'public struct S {
+    public func load() {}
+}' 'public struct S {
+    public static func load() {}
+}'
+expect_count "método de instância vira static: BLOCKER" SWIFT-API-BREAK BLOCKER 1
+pair_case "Sources/Shop/Load.swift" 'public class C {
+    public class func make() {}
+}' 'public class C {
+    public static func make() {}
+}'
+expect_count "class func para static func (ambos do tipo): sem achado" SWIFT-API-BREAK "" 0
+pair_case "Sources/Shop/Load.swift" 'public struct S {}
+public extension S {
+    static func load() {}
+}' 'public struct S {}
+public extension S {
+    func load() {}
+}'
+expect_count "static em public extension vira instância: BLOCKER" SWIFT-API-BREAK BLOCKER 1
+pair_case "Sources/Shop/Load.swift" 'public struct S {
+    public static func load() {}
+}' 'public struct S {
+    public   static   func load( ) {}
+}'
+expect_count "static só reformatado: sem achado" SWIFT-API-BREAK "" 0
+
+# R6: módulo de origem
+build pipeline-unified
+printf '// swift-tools-version:5.7\nimport PackageDescription\nlet package = Package(name: "Shop", platforms: [.iOS(.v15), .macOS(.v12)], products: [.library(name: "Shop", targets: ["Shop"]), .library(name: "Other", targets: ["Other"]), .library(name: "Core", targets: ["Core"])], targets: [.target(name: "Shop"), .target(name: "Other"), .target(name: "Core", path: "Lib/Core")])\n' > "$repo/Package.swift"
+mkdir -p "$repo/Sources/Other" "$repo/Lib/Core" "$repo/Loose"
+client='public struct Client {
+    public func fetch() {}
+}'
+printf '%s\n' "$client" > "$repo/Sources/Shop/Client.swift"; printf '%s\n' "$client" > "$repo/Sources/Other/Client.swift"
+printf 'public struct Engine {\n    public func start() {}\n}\n' > "$repo/Lib/Core/Engine.swift"
+printf 'public struct Loose {\n    public func go() {}\n}\n' > "$repo/Loose/Loose.swift"
+g add -A; g commit -q -m modules; g branch -f main HEAD
+printf 'public struct Client {\n}\n' > "$repo/Sources/Shop/Client.swift"
+mkdir -p "$repo/Lib/Core/Sub"; g mv Lib/Core/Engine.swift Lib/Core/Sub/Engine.swift
+printf '// mudança\n' >> "$repo/Lib/Core/Sub/Engine.swift"
+mkdir -p "$repo/Elsewhere"; g mv Loose/Loose.swift Elsewhere/Loose.swift; printf '// mudança\n' >> "$repo/Elsewhere/Loose.swift"
+g add -A; g commit -q -m modules-change
+run
+expect_count "API removida de um target com homônimo em outro: BLOCKER" SWIFT-API-BREAK BLOCKER 1
+expect_evidence "quebra cita o homônimo de outro módulo" SWIFT-API-BREAK "homônimo em outro módulo (Other)"
+if jq -e 'any(.findings[]; .rule == "SWIFT-API-BREAK" and (.evidence | contains("Engine")))' "$work/out.json" >/dev/null; then
+  fail "movimento dentro do mesmo target (path: customizado) não é quebra" "Engine sinalizado"; else ok "movimento dentro do mesmo target (path: customizado) não é quebra"; fi
+expect_count "arquivo fora de qualquer target movido: WARNING de origem, não BLOCKER" SWIFT-API-ORIGIN-UNKNOWN WARNING 2
+build pipeline-unified
+printf '// swift-tools-version:5.7\nimport PackageDescription\nlet package = Package(name: "Shop", platforms: [.iOS(.v15)], products: [.library(name: "Shop", targets: ["Shop", "Other"])], targets: [.target(name: "Shop"), .target(name: "Other")])\n' > "$repo/Package.swift"
+mkdir -p "$repo/Sources/Other"
+printf 'public struct Mover {\n    public func go() {}\n}\n' > "$repo/Sources/Shop/Mover.swift"
+g add -A; g commit -q -m mover; g branch -f main HEAD
+g mv Sources/Shop/Mover.swift Sources/Other/Mover.swift; g commit -q -m move-target
+run
+expect_count "arquivo movido para outro target: API sai do módulo original (BLOCKER)" SWIFT-API-BREAK BLOCKER 2
+g mv Sources/Other/Mover.swift Sources/Other/Mover2.swift; g branch -f main HEAD~0; g commit -q -m rename-same-dir
+run
+expect_count "arquivo renomeado no mesmo diretório: sem achado" SWIFT-API-BREAK "" 0
+
+# R7: remoção da CodingKeys
+item_before='public struct Item: Codable {
+    public let id: String
+    public let name: String
+    enum CodingKeys: String, CodingKey {
+        case id = "item_id"
+        case name
+    }
+}'
+pair_case "Sources/Shop/Item.swift" "$item_before" 'public struct Item: Codable {
+    public let id: String
+    public let name: String
+}'
+expect_count "CodingKeys com mapeamento customizado removida: WARNING" SWIFT-CONTRACT-KEYS WARNING 1
+expect_evidence "contrato cita a chave que muda" SWIFT-CONTRACT-KEYS "'item_id' passa a ser 'id'"
+pair_case "Sources/Shop/Item.swift" 'public struct Item: Codable {
+    public let id: String
+    enum CodingKeys: String, CodingKey {
+        case id
+    }
+}' 'public struct Item: Codable {
+    public let id: String
+}'
+expect_count "CodingKeys equivalente ao nome sintetizado removida: sem achado" SWIFT-CONTRACT-KEYS "" 0
+pair_case "Sources/Shop/Item.swift" "$item_before" 'public struct Item: Codable {
+    public let id: String
+    public let name: String
+    public init(from decoder: Decoder) throws { fatalError() }
+    public func encode(to encoder: Encoder) throws {}
+}'
+expect_count "CodingKeys removida com encode/decode explícito: INFO" SWIFT-CONTRACT-KEYS INFO 1
+pair_case "Sources/Shop/Item.swift" "$item_before" 'public struct Other {}'
+expect_count "tipo removido: sem achado de contrato (a remoção é de API)" SWIFT-CONTRACT-KEYS "" 0
+
+# R8: falha ao gravar --output
+build pipeline-unified
+for target in "$work/nao/existe/out.json" "$work"; do
+  status=0; python3 "$AUDIT" --repo "$repo" --base main --output "$target" >/dev/null 2>"$work/err.txt" || status=$?
+  if [ "$status" = 2 ] && grep -q "não foi possível gravar o relatório" "$work/err.txt" && ! grep -q Traceback "$work/err.txt"; then
+    ok "--output inválido ($target): status 2 com mensagem, sem traceback"; else fail "--output inválido ($target)" "status $status"; fi
+done
+mkdir -p "$work/ro"; chmod 555 "$work/ro"
+if [ ! -w "$work/ro" ]; then
+  status=0; python3 "$AUDIT" --repo "$repo" --base main --output "$work/ro/out.json" >/dev/null 2>"$work/err.txt" || status=$?
+  if [ "$status" = 2 ] && ! grep -q Traceback "$work/err.txt"; then ok "--output sem permissão: status 2"; else fail "--output sem permissão" "status $status"; fi
+else
+  ok "--output sem permissão: ignorado (execução com privilégio de escrita)"
+fi
+chmod 755 "$work/ro"
+status=0; python3 "$AUDIT" --repo "$repo" --base main --format json --output "$work/report.json" >/dev/null 2>&1 || status=$?
+if [ "$status" = 0 ] && jq -e '.counts' "$work/report.json" >/dev/null; then ok "--output válido grava o relatório"; else fail "--output válido" "status $status"; fi
+
 # --- reprodutibilidade e formatos --------------------------------------
 build pipeline-duplicated; run; cp "$work/out.json" "$work/first.json"; run
 if cmp -s "$work/first.json" "$work/out.json"; then ok "duas execuções produzem o mesmo JSON"; else fail "reprodutível" "saídas diferentes"; fi
