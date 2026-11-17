@@ -111,7 +111,7 @@ Swift/iOS (quando há `.swift` alterado):
 
 | Regra | Método |
 |---|---|
-| `SWIFT-AVAILABILITY` API acima da plataforma mínima, fora de `#available`/`@available` (tabela curada) | determinística (BLOCKER) para símbolos inequívocos |
+| `SWIFT-AVAILABILITY` API acima da plataforma mínima, fora de `#available`/`@available`/`#unavailable … else` (tabela curada) | BLOCKER só quando comprovado; WARNING quando há dúvida (abaixo) |
 | `SWIFT-API-BREAK` declaração `public`/`open` ou conformidade da base ausente no HEAD | determinística no nível da declaração |
 | `SWIFT-API-DEPRECATED` API antiga mantida como deprecated — confirmar delegação e teste | heurística |
 | `SWIFT-PROTOCOL-REQUIREMENT` requisito novo em protocolo público sem implementação padrão | heurística |
@@ -121,6 +121,20 @@ Swift/iOS (quando há `.swift` alterado):
 | `SWIFT-CONCURRENCY-UNSAFE` `@unchecked Sendable`, `nonisolated(unsafe)` | determinística |
 | `SWIFT-DEPRECATED-NO-MESSAGE` deprecated sem `message:`/`renamed:` (fora de testes) | determinística |
 | `SWIFT-TEST-FRAMEWORK-MIX` XCTest e Swift Testing no mesmo arquivo | determinística |
+
+### Quando `SWIFT-AVAILABILITY` é BLOCKER
+
+Só quando tudo abaixo vale; caso contrário é WARNING, e a evidência diz o
+que não está comprovado:
+
+- o símbolo é inequívoco na tabela e o projeto não declara um tipo ou
+  função com o mesmo nome (backport);
+- a plataforma mínima vem do `Package.swift` mais próximo do arquivo, da
+  política, ou de um `project.pbxproj` com um único valor por plataforma;
+- o uso não está dentro de `#if … #endif`;
+- nenhuma proteção cobre o uso: `if #available`, `guard #available`,
+  `@available(iOS 16, *)`, `@available(iOS, introduced: 16)` ou o `else`
+  de `if #unavailable`.
 
 ## 5. Limites
 

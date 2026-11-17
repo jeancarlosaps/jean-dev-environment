@@ -17,28 +17,29 @@ PLATFORMS = {"iOS": "ios", "macOS": "macos", "tvOS": "tvos", "watchOS": "watchos
 
 # Tabela curada a partir da documentação de disponibilidade da Apple. Não é
 # exaustiva. "alta": o símbolo é inequívoco; "média": pode ser tipo próprio.
+# Último campo: nome que, declarado pelo projeto, indica backport (rebaixa a WARNING).
 AVAILABILITY = [
-    (r"\bTask\s*\.\s*sleep\s*\(\s*for\s*:", "Task.sleep(for:)", {"ios": 16, "macos": 13, "tvos": 16, "watchos": 9}, "alta"),
-    (r"\bTask\s*\.\s*sleep\s*\(\s*until\s*:", "Task.sleep(until:)", {"ios": 16, "macos": 13, "tvos": 16, "watchos": 9}, "alta"),
-    (r"\b(ContinuousClock|SuspendingClock)\b", "ContinuousClock/SuspendingClock", {"ios": 16, "macos": 13, "tvos": 16, "watchos": 9}, "alta"),
-    (r"\bNavigationStack\b", "NavigationStack", {"ios": 16, "macos": 13, "tvos": 16, "watchos": 9}, "alta"),
-    (r"\bNavigationSplitView\b", "NavigationSplitView", {"ios": 16, "macos": 13, "tvos": 16, "watchos": 9}, "alta"),
-    (r"\bImageRenderer\b", "ImageRenderer", {"ios": 16, "macos": 13, "tvos": 16, "watchos": 9}, "alta"),
-    (r"\.toolbar\s*\(\s*\.hidden", "toolbar(.hidden)", {"ios": 16, "macos": 13, "tvos": 16, "watchos": 9}, "alta"),
-    (r"\bRegex\s*<", "Regex<…>", {"ios": 16, "macos": 13, "tvos": 16, "watchos": 9}, "média"),
-    (r"\bContentUnavailableView\b", "ContentUnavailableView", {"ios": 17, "macos": 14, "tvos": 17, "watchos": 10}, "alta"),
-    (r"@Observable\b", "@Observable", {"ios": 17, "macos": 14, "tvos": 17, "watchos": 10}, "alta"),
-    (r"@Bindable\b", "@Bindable", {"ios": 17, "macos": 14, "tvos": 17, "watchos": 10}, "alta"),
-    (r"\.scrollTargetBehavior\s*\(", "scrollTargetBehavior(_:)", {"ios": 17, "macos": 14, "tvos": 17, "watchos": 10}, "alta"),
-    (r"\.containerRelativeFrame\s*\(", "containerRelativeFrame(_:)", {"ios": 17, "macos": 14, "tvos": 17, "watchos": 10}, "alta"),
-    (r"\.sensoryFeedback\s*\(", "sensoryFeedback(_:trigger:)", {"ios": 17, "macos": 14, "watchos": 10}, "alta"),
-    (r"\.onChange\s*\(\s*of\s*:[^)\n]*\binitial\s*:", "onChange(of:initial:_:)", {"ios": 17, "macos": 14, "tvos": 17, "watchos": 10}, "alta"),
-    (r"\bAsyncImage\b", "AsyncImage", {"ios": 15, "macos": 12, "tvos": 15, "watchos": 8}, "alta"),
-    (r"\.refreshable\s*\{", "refreshable(action:)", {"ios": 15, "macos": 12, "tvos": 15, "watchos": 8}, "alta"),
-    (r"\bURLSession\b[^\n]*\.data\s*\(\s*(from|for)\s*:", "URLSession.data(from:/for:) async", {"ios": 15, "macos": 12, "tvos": 15, "watchos": 8}, "alta"),
-    (r"\.formatted\s*\(", "formatted(_:)", {"ios": 15, "macos": 12, "tvos": 15, "watchos": 8}, "média"),
+    (r"\bTask\s*\.\s*sleep\s*\(\s*for\s*:", "Task.sleep(for:)", {"ios": 16, "macos": 13, "tvos": 16, "watchos": 9}, "alta", "sleep"),
+    (r"\bTask\s*\.\s*sleep\s*\(\s*until\s*:", "Task.sleep(until:)", {"ios": 16, "macos": 13, "tvos": 16, "watchos": 9}, "alta", "sleep"),
+    (r"\b(ContinuousClock|SuspendingClock)\b", "ContinuousClock/SuspendingClock", {"ios": 16, "macos": 13, "tvos": 16, "watchos": 9}, "alta", "ContinuousClock"),
+    (r"\bNavigationStack\b", "NavigationStack", {"ios": 16, "macos": 13, "tvos": 16, "watchos": 9}, "alta", "NavigationStack"),
+    (r"\bNavigationSplitView\b", "NavigationSplitView", {"ios": 16, "macos": 13, "tvos": 16, "watchos": 9}, "alta", "NavigationSplitView"),
+    (r"\bImageRenderer\b", "ImageRenderer", {"ios": 16, "macos": 13, "tvos": 16, "watchos": 9}, "alta", "ImageRenderer"),
+    (r"\.toolbar\s*\(\s*\.hidden", "toolbar(.hidden)", {"ios": 16, "macos": 13, "tvos": 16, "watchos": 9}, "alta", "toolbar"),
+    (r"\bRegex\s*<", "Regex<…>", {"ios": 16, "macos": 13, "tvos": 16, "watchos": 9}, "média", "Regex"),
+    (r"\bContentUnavailableView\b", "ContentUnavailableView", {"ios": 17, "macos": 14, "tvos": 17, "watchos": 10}, "alta", "ContentUnavailableView"),
+    (r"@Observable\b", "@Observable", {"ios": 17, "macos": 14, "tvos": 17, "watchos": 10}, "alta", "Observable"),
+    (r"@Bindable\b", "@Bindable", {"ios": 17, "macos": 14, "tvos": 17, "watchos": 10}, "alta", "Bindable"),
+    (r"\.scrollTargetBehavior\s*\(", "scrollTargetBehavior(_:)", {"ios": 17, "macos": 14, "tvos": 17, "watchos": 10}, "alta", "scrollTargetBehavior"),
+    (r"\.containerRelativeFrame\s*\(", "containerRelativeFrame(_:)", {"ios": 17, "macos": 14, "tvos": 17, "watchos": 10}, "alta", "containerRelativeFrame"),
+    (r"\.sensoryFeedback\s*\(", "sensoryFeedback(_:trigger:)", {"ios": 17, "macos": 14, "watchos": 10}, "alta", "sensoryFeedback"),
+    (r"\.onChange\s*\(\s*of\s*:[^)\n]*\binitial\s*:", "onChange(of:initial:_:)", {"ios": 17, "macos": 14, "tvos": 17, "watchos": 10}, "alta", "onChange"),
+    (r"\bAsyncImage\b", "AsyncImage", {"ios": 15, "macos": 12, "tvos": 15, "watchos": 8}, "alta", "AsyncImage"),
+    (r"\.refreshable\s*\{", "refreshable(action:)", {"ios": 15, "macos": 12, "tvos": 15, "watchos": 8}, "alta", "refreshable"),
+    (r"\bURLSession\b[^\n]*\.data\s*\(\s*(from|for)\s*:", "URLSession.data(from:/for:) async", {"ios": 15, "macos": 12, "tvos": 15, "watchos": 8}, "alta", None),
+    (r"\.formatted\s*\(", "formatted(_:)", {"ios": 15, "macos": 12, "tvos": 15, "watchos": 8}, "média", "formatted"),
 ]
-AVAILABILITY = [(re.compile(p), s, v, c) for p, s, v, c in AVAILABILITY]
+AVAILABILITY = [(re.compile(p), s, v, c, d) for p, s, v, c, d in AVAILABILITY]
 
 TYPE_KINDS = ("class", "struct", "enum", "protocol", "actor", "extension")
 DECL = re.compile(
@@ -120,42 +121,79 @@ def block_end(code, open_index):
 # ---------------------------------------------------------------------
 
 def parse_version(text):
-    parts = re.findall(r"\d+", text)
-    return float(f"{parts[0]}.{parts[1]}") if len(parts) > 1 else float(parts[0])
+    """'15', '15.4', '10_15' → (15,), (15, 4), (10, 15). Tupla: 15.10 > 15.9."""
+    return tuple(int(p) for p in re.findall(r"\d+", text))
 
 
-def deployment_targets(read_head, tracked, policy):
-    """{plataforma: versão mínima} e a origem de cada valor."""
-    targets, origin = {}, {}
-    for key, value in (policy.get("min_platforms") or {}).items():
-        targets[key.lower()] = parse_version(str(value)); origin[key.lower()] = "política"
-    manifests = [p for p in tracked if os.path.basename(p) == "Package.swift" and not is_fixture_path(p)]
-    for path in manifests:
-        text = clean(read_head(path) or "")
-        for name, key in PLATFORMS.items():
-            for match in re.finditer(r"\." + name + r"\s*\(\s*(?:\.v(\d+(?:_\d+)?)|\"([\d.]+)\")\s*\)", text):
-                version = parse_version((match.group(1) or match.group(2)).replace("_", "."))
-                if key not in origin or origin[key] != "política":
-                    if key not in targets or version < targets[key]:
-                        targets[key], origin[key] = version, path
+def show_version(version):
+    return ".".join(str(p) for p in version)
+
+
+def manifest_platforms(text):
+    found = {}
+    code = clean(text)
+    for name, key in PLATFORMS.items():
+        for match in re.finditer(r"\." + name + r"\s*\(\s*(?:\.v(\d+(?:_\d+)*)|\"([\d.]+)\")\s*\)", code):
+            found[key] = parse_version(match.group(1) or match.group(2))
+    return found
+
+
+def project_platforms(read_head, tracked):
+    """Alvos de project.pbxproj: {plataforma: (mínimo, valores distintos)}."""
+    values = {}
     for path in tracked:
         if path.endswith("project.pbxproj") and not is_fixture_path(path):
             text = read_head(path) or ""
             for setting, key in (("IPHONEOS", "ios"), ("MACOSX", "macos"), ("TVOS", "tvos"), ("WATCHOS", "watchos")):
                 for match in re.finditer(setting + r"_DEPLOYMENT_TARGET = ([\d.]+);", text):
-                    version = parse_version(match.group(1))
-                    if origin.get(key) != "política" and (key not in targets or version < targets[key]):
-                        targets[key], origin[key] = version, path
-    return targets, origin
+                    values.setdefault(key, set()).add(parse_version(match.group(1)))
+    return {k: (min(v), len(v)) for k, v in values.items()}
+
+
+def targets_for(path, ctx, read_head):
+    """Alvos válidos para o arquivo e se são inequívocos.
+
+    Ordem: política (min_platforms) > Package.swift ancestral mais próximo >
+    project.pbxproj. pbxproj com valores diferentes por target é ambíguo:
+    não se sabe a qual target o arquivo pertence.
+    """
+    policy = ctx.policy.get("min_platforms") or {}
+    if policy:
+        return {k.lower(): parse_version(str(v)) for k, v in policy.items()}, "política", True
+    manifests = {p for p in ctx.head_files if os.path.basename(p) == "Package.swift" and not is_fixture_path(p)}
+    directory = os.path.dirname(path)
+    while True:
+        candidate = os.path.join(directory, "Package.swift") if directory else "Package.swift"
+        if candidate in manifests:
+            found = manifest_platforms(read_head(candidate) or "")
+            if found:
+                return found, candidate, True
+        if not directory:
+            break
+        directory = os.path.dirname(directory)
+    project = project_platforms(read_head, ctx.head_files)
+    if project:
+        return ({k: v[0] for k, v in project.items()}, "project.pbxproj",
+                all(count == 1 for _, count in project.values()))
+    return {}, None, False
 
 
 def guarded_regions(code):
-    """[(início, fim, {plataforma: versão})] cobertos por #available/@available."""
+    """[(início, fim, {plataforma: versão})] cobertos por #available/@available/#unavailable."""
     regions = []
     for match in re.finditer(r"\bif\s+#available\s*\(([^)]*)\)", code):
         brace = code.find("{", match.end())
         if brace >= 0:
             regions.append((brace, block_end(code, brace), availability_spec(match.group(1))))
+    for match in re.finditer(r"\bif\s+#unavailable\s*\(([^)]*)\)", code):
+        brace = code.find("{", match.end())
+        if brace < 0:
+            continue
+        after = block_end(code, brace)
+        other = re.match(r"\s*else\s*\{", code[after:])
+        if other:
+            open_index = after + other.end() - 1
+            regions.append((open_index, block_end(code, open_index), availability_spec(match.group(1))))
     for match in re.finditer(r"\bguard\s+#available\s*\(([^)]*)\)[^{]*\{", code):
         else_end = block_end(code, match.end() - 1)
         depth, j = 0, else_end
@@ -181,48 +219,92 @@ def guarded_regions(code):
 def availability_spec(text):
     spec = {}
     for name, key in PLATFORMS.items():
-        match = re.search(r"\b" + name + r"\s+([\d.]+)", text)
+        match = re.search(r"\b" + name + r"\s+([\d.]+)", text) or \
+            re.search(r"\b" + name + r"\s*,[^)]*?\bintroduced\s*:\s*([\d.]+)", text)
         if match:
             spec[key] = parse_version(match.group(1))
     return spec
 
 
+def conditional_regions(code):
+    """[(início, fim)] de blocos #if … #endif: a plataforma que compila o trecho é incerta."""
+    regions, stack = [], []
+    for match in re.finditer(r"^[ \t]*#(if|endif)\b", code, re.M):
+        if match.group(1) == "if":
+            stack.append(match.start())
+        elif stack:
+            regions.append((stack.pop(), match.end()))
+    return regions
+
+
+def project_declares(name, ctx, read_head):
+    """O projeto declara um símbolo com o mesmo nome (ex.: backport)?"""
+    pattern = re.compile(r"\b(?:struct|class|enum|actor|typealias|protocol|func|macro)\s+" + re.escape(name) + r"\b")
+    for path in ctx.head_files:
+        if path.endswith(".swift") and not is_fixture_path(path):
+            if pattern.search(clean(read_head(path) or "")):
+                return True
+    return False
+
+
 def check_availability(audit, ctx, read_head):
-    targets, origin = deployment_targets(read_head, ctx.head_files, ctx.policy)
-    if not targets:
-        audit.skipped("disponibilidade de API: deployment target não encontrado (Package.swift, project.pbxproj ou min_platforms)")
-        return
-    shown = ", ".join(f"{k} {v:g} ({origin[k]})" for k, v in sorted(targets.items()))
+    shown, declared_cache = {}, {}
     for f in ctx.swift_files:
+        targets, origin, unambiguous = targets_for(f["path"], ctx, read_head)
+        if not targets:
+            audit.skipped(f"disponibilidade de API em {f['path']}: deployment target não encontrado")
+            continue
+        shown[origin] = ", ".join(f"{k} {show_version(v)}" for k, v in sorted(targets.items()))
         text = read_head(f["path"]) or ""
         code = clean(text)
         regions = guarded_regions(code)
+        conditionals = conditional_regions(code)
         added = {n for n, _ in f["added"]}
-        starts = [0] + [m.end() for m in re.finditer("\n", code)]
-        for pattern, symbol, needs, confidence in AVAILABILITY:
+        for pattern, symbol, needs, confidence, declared_name in AVAILABILITY:
             for match in pattern.finditer(code):
                 line = line_of(code, match.start())
                 if line not in added:
                     continue
+                before = code[code.rfind("\n", 0, match.start()) + 1:match.start()]
+                if re.search(r"\b(?:struct|class|enum|actor|typealias|protocol|func)\s+$", before):
+                    continue  # declaração do próprio projeto, não uso da API
                 failing = []
                 for platform, minimum in targets.items():
                     required = needs.get(platform)
-                    if required is None or minimum >= required:
+                    if required is None or minimum >= (required,):
                         continue
-                    covered = any(lo <= match.start() < hi and spec.get(platform, 0) >= required
+                    covered = any(lo <= match.start() < hi and spec.get(platform, ()) >= (required,)
                                   for lo, hi, spec in regions)
                     if not covered:
-                        failing.append(f"{platform} {required:g}+ (alvo {minimum:g})")
-                if failing:
-                    severity = "BLOCKER" if confidence == "alta" else "WARNING"
-                    audit.add(Finding(
-                        "SWIFT-AVAILABILITY", severity,
-                        f"{symbol} exige {', '.join(failing)} e não está protegido por #available/@available",
-                        "não compila (ou não roda) na plataforma mínima declarada",
-                        "usar API equivalente disponível no alvo ou proteger com if #available",
-                        "determinística" if confidence == "alta" else "heurística", confidence,
-                        file=f["path"], line=line))
-    audit.checked(f"disponibilidade de API nas linhas adicionadas contra {shown} (tabela curada, não exaustiva)")
+                        failing.append(f"{platform} {required}+ (alvo {show_version(minimum)})")
+                if not failing:
+                    continue
+                doubts = []
+                if confidence != "alta":
+                    doubts.append("o símbolo pode ser um tipo do próprio projeto")
+                if not unambiguous:
+                    doubts.append("project.pbxproj tem alvos diferentes por target")
+                if any(lo <= match.start() < hi for lo, hi in conditionals):
+                    doubts.append("o uso está dentro de #if; a plataforma que compila o trecho é incerta")
+                if declared_name:
+                    if declared_name not in declared_cache:
+                        declared_cache[declared_name] = project_declares(declared_name, ctx, read_head)
+                    if declared_cache[declared_name]:
+                        doubts.append(f"o projeto declara '{declared_name}' (possível backport)")
+                proven = not doubts
+                evidence = f"{symbol} exige {', '.join(failing)} e não está protegido por #available/@available"
+                if doubts:
+                    evidence += "; não comprovado: " + "; ".join(doubts)
+                audit.add(Finding(
+                    "SWIFT-AVAILABILITY", "BLOCKER" if proven else "WARNING", evidence,
+                    "não compila na plataforma mínima declarada" if proven else
+                    "pode não compilar na plataforma mínima declarada",
+                    "usar API equivalente disponível no alvo ou proteger com if #available",
+                    "determinística" if proven else "heurística", "alta" if proven else "média",
+                    file=f["path"], line=line))
+    if shown:
+        audit.checked("disponibilidade de API nas linhas adicionadas (tabela curada, não exaustiva) contra "
+                      + "; ".join(f"{v} ({k})" for k, v in sorted(shown.items())))
 
 
 # ---------------------------------------------------------------------

@@ -130,6 +130,92 @@ expect_count "código em diretório de fixtures não é auditado pela camada Swi
 if jq -e 'any(.verified[]; contains("ios 15"))' "$work/out.json" >/dev/null; then
   ok "Package.swift de fixture não define o deployment target"; else fail "Package.swift de fixture" "alvo lido da fixture"; fi
 
+# --- SWIFT-AVAILABILITY: BLOCKER só com incompatibilidade comprovada ----
+avail_file() {  # avail_file <arquivo>: severidades da regra nesse arquivo
+  jq -r --arg f "$1" '[.findings[] | select(.rule == "SWIFT-AVAILABILITY" and .file == $f) | .severity] | join(",")' "$work/out.json"
+}
+expect_avail() {  # expect_avail <label> <arquivo> <severidades esperadas, "" = nenhuma>
+  local got
+  got=$(avail_file "$2")
+  if [ "$got" = "$3" ]; then ok "$1"; else fail "$1" "SWIFT-AVAILABILITY em $2: [$got], esperado [$3]"; fi
+}
+build pipeline-unified
+mkdir -p "$repo/Modules/Modern/Sources/Modern"
+printf '// swift-tools-version:5.9\nimport PackageDescription\nlet package = Package(name: "Modern", platforms: [.iOS(.v17), .macOS(.v14)])\n' > "$repo/Modules/Modern/Package.swift"
+printf 'func pause() async throws {\n    try await Task.sleep(for: .seconds(1))\n}\n' > "$repo/Modules/Modern/Sources/Modern/Pause.swift"
+cat > "$repo/Sources/Shop/Guards.swift" <<'SWIFT'
+import SwiftUI
+
+@available(iOS, introduced: 16.0)
+@available(macOS, introduced: 13.0)
+func introducedForm() async throws {
+    try await Task.sleep(for: .seconds(1))
+}
+
+func unavailableElse() async throws {
+    if #unavailable(iOS 16, macOS 13) {
+        try await Task.sleep(nanoseconds: 1)
+    } else {
+        try await Task.sleep(for: .seconds(1))
+    }
+}
+
+func unprotectedElse() async throws {
+    if #available(iOS 16, macOS 13, *) {
+        try await Task.sleep(nanoseconds: 1)
+    } else {
+        try await Task.sleep(for: .seconds(1))
+    }
+}
+SWIFT
+cat > "$repo/Sources/Shop/Conditional.swift" <<'SWIFT'
+#if os(visionOS)
+func spatial() async throws {
+    try await Task.sleep(for: .seconds(1))
+}
+#endif
+SWIFT
+cat > "$repo/Sources/Shop/Backport.swift" <<'SWIFT'
+import SwiftUI
+
+struct NavigationStack<Content: View>: View {
+    let content: Content
+    var body: some View { content }
+}
+
+struct Screen: View {
+    var body: some View { NavigationStack(content: Text("ok")) }
+}
+SWIFT
+g add -A; g commit -q -m availability
+run
+expect_avail "Package.swift mais próximo (iOS 17) vale para o arquivo do submódulo" Modules/Modern/Sources/Modern/Pause.swift ""
+expect_avail "@available(iOS, introduced:) protege; else de #available não protege" Sources/Shop/Guards.swift "BLOCKER"
+if jq -e '[.findings[] | select(.rule == "SWIFT-AVAILABILITY" and .file == "Sources/Shop/Guards.swift") | .line] == [21]' "$work/out.json" >/dev/null; then
+  ok "#unavailable { } else { } protege o else; só o else de #available é apontado (linha 21)"; else fail "#unavailable" "linhas erradas"; fi
+expect_avail "uso dentro de #if: WARNING, não BLOCKER" Sources/Shop/Conditional.swift "WARNING"
+expect_avail "projeto que declara NavigationStack (backport): WARNING" Sources/Shop/Backport.swift "WARNING"
+expect_evidence "rebaixamento explica o que não está comprovado" SWIFT-AVAILABILITY "não comprovado: o projeto declara 'NavigationStack'"
+
+build pipeline-unified
+g rm -q Package.swift
+mkdir -p "$repo/App.xcodeproj"
+printf 'IPHONEOS_DEPLOYMENT_TARGET = 15.0;\nIPHONEOS_DEPLOYMENT_TARGET = 15.0;\n' > "$repo/App.xcodeproj/project.pbxproj"
+printf 'func pause() async throws {\n    try await Task.sleep(for: .seconds(1))\n}\n' > "$repo/Sources/Shop/Pause.swift"
+g add -A; g commit -q -m app
+run
+expect_avail "project.pbxproj com alvo único: BLOCKER" Sources/Shop/Pause.swift "BLOCKER"
+printf 'IPHONEOS_DEPLOYMENT_TARGET = 15.0;\nIPHONEOS_DEPLOYMENT_TARGET = 17.0;\n' > "$repo/App.xcodeproj/project.pbxproj"
+g add -A; g commit -q -m targets
+run
+expect_avail "project.pbxproj com alvos diferentes por target: WARNING" Sources/Shop/Pause.swift "WARNING"
+printf '{"min_platforms": {"ios": "16.1"}}\n' > "$work/min.json"
+run --policy "$work/min.json"
+expect_avail "min_platforms 16.1 na política permite Task.sleep(for:)" Sources/Shop/Pause.swift ""
+printf '{"min_platforms": {"ios": "15.10"}}\n' > "$work/min.json"
+run --policy "$work/min.json"
+expect_avail "versão comparada como número de versão (15.10 < 16)" Sources/Shop/Pause.swift "BLOCKER"
+
 # --- 9: testes ausentes --------------------------------------------------
 build tests-missing; run
 expect_count "Swift alterado sem teste: WARNING" CORE-TESTS-MISSING WARNING 1
