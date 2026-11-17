@@ -186,41 +186,121 @@ def targets_for(path, ctx, read_head):
     return {}, None, False
 
 
+DECL_START = re.compile(
+    r"\s*(?:@|}|(?:(?:public|open|internal|fileprivate|private|package|static|class|final|override|mutating|"
+    r"nonmutating|nonisolated|convenience|required|dynamic|lazy|weak|unowned|indirect)\s+)*"
+    r"(?:func|init|deinit|var|let|typealias|associatedtype|subscript|case|struct|class|enum|actor|protocol|extension)\b)")
+BODYLESS = ("typealias", "associatedtype", "case")
+
+
+def statement_keyword(code, at):
+    """if/guard/while da lista de condições que contém a posição at, ou None.
+
+    Volta até a palavra-chave sem atravessar chave: a condição de
+    disponibilidade pode ser a primeira ou vir depois de outras
+    (if enabled, #available(iOS 16, *) { … })."""
+    j = at - 1
+    while j >= 0 and code[j] not in "{};":
+        j -= 1
+    head = code[j + 1:at]
+    match = None
+    for match in re.finditer(r"\b(if|guard|while)\b", head):
+        pass
+    return (match.group(1), j + 1 + match.end()) if match else None
+
+
+def condition_body(code, start):
+    """Índice da { que abre o corpo do comando: a primeira fora de parênteses."""
+    depth = 0
+    for j in range(start, len(code)):
+        c = code[j]
+        if c in "([":
+            depth += 1
+        elif c in ")]":
+            depth -= 1
+        elif c == "{" and depth == 0:
+            return j
+    return -1
+
+
+def rest_of_block(code, start):
+    depth, j = 0, start
+    while j < len(code):
+        if code[j] == "{":
+            depth += 1
+        elif code[j] == "}":
+            if depth == 0:
+                return j
+            depth -= 1
+        j += 1
+    return j
+
+
+def declaration_extent(code, start):
+    """Fim da declaração que começa em start (depois dos atributos).
+
+    Com corpo, vai até a } que o fecha. Sem corpo (typealias, case,
+    requisito de protocolo, propriedade armazenada), termina na quebra de
+    linha que antecede a próxima declaração: o atributo não protege o que
+    vem depois."""
+    while start < len(code) and code[start].isspace():
+        start += 1
+    kind = re.match(r"\s*(?:\w+\s+)*?(func|init|deinit|var|let|typealias|associatedtype|subscript|case|"
+                    r"struct|class|enum|actor|protocol|extension)\b", code[start:])
+    if kind and kind.group(1) in BODYLESS:
+        end = code.find("\n", start)
+        return len(code) if end < 0 else end
+    depth, j = 0, start
+    while j < len(code):
+        c = code[j]
+        if c in "([":
+            depth += 1
+        elif c in ")]":
+            depth -= 1
+        elif c == "{" and depth == 0:
+            return block_end(code, j)
+        elif c == "\n" and depth == 0 and DECL_START.match(code, j + 1):
+            return j  # a próxima linha já é outra declaração: esta não tem corpo
+        j += 1
+    return len(code)
+
+
 def guarded_regions(code):
     """[(início, fim, {plataforma: versão})] cobertos por #available/@available/#unavailable."""
     regions = []
-    for match in re.finditer(r"\bif\s+#available\s*\(([^)]*)\)", code):
-        brace = code.find("{", match.end())
-        if brace >= 0:
-            regions.append((brace, block_end(code, brace), availability_spec(match.group(1))))
-    for match in re.finditer(r"\bif\s+#unavailable\s*\(([^)]*)\)", code):
-        brace = code.find("{", match.end())
+    for match in re.finditer(r"#(available|unavailable)\s*\(([^)]*)\)", code):
+        spec = availability_spec(match.group(2))
+        owner = statement_keyword(code, match.start())
+        if not spec or not owner:
+            continue
+        keyword, _ = owner
+        brace = condition_body(code, match.end())
         if brace < 0:
             continue
-        after = block_end(code, brace)
-        other = re.match(r"\s*else\s*\{", code[after:])
-        if other:
-            open_index = after + other.end() - 1
-            regions.append((open_index, block_end(code, open_index), availability_spec(match.group(1))))
-    for match in re.finditer(r"\bguard\s+#available\s*\(([^)]*)\)[^{]*\{", code):
-        else_end = block_end(code, match.end() - 1)
-        depth, j = 0, else_end
-        while j < len(code):
-            if code[j] == "{":
-                depth += 1
-            elif code[j] == "}":
-                if depth == 0:
-                    break
-                depth -= 1
-            j += 1
-        regions.append((else_end, j, availability_spec(match.group(1))))
+        body_end = block_end(code, brace)
+        if match.group(1) == "available":
+            if keyword == "guard":
+                regions.append((body_end, rest_of_block(code, body_end), spec))
+            else:
+                regions.append((brace, body_end, spec))
+        elif keyword == "if":
+            other = re.match(r"\s*else\s*\{", code[body_end:])
+            if other:
+                open_index = body_end + other.end() - 1
+                regions.append((open_index, block_end(code, open_index), spec))
+        elif keyword == "guard":  # guard #unavailable(...) else { protegido } — corpo do else
+            regions.append((brace, body_end, spec))
     for match in re.finditer(r"@available\s*\(([^)]*)\)", code):
         spec = availability_spec(match.group(1))
         if not spec:
             continue
-        brace = code.find("{", match.end())
-        if brace >= 0:
-            regions.append((match.start(), block_end(code, brace), spec))
+        start = match.end()
+        while True:  # pula atributos seguintes (@available de outra plataforma, @MainActor…)
+            more = re.match(r"\s*@\w+(?:\s*\((?:[^()]|\([^()]*\))*\))?", code[start:])
+            if not more:
+                break
+            start += more.end()
+        regions.append((match.start(), declaration_extent(code, start), spec))
     return regions
 
 
@@ -364,9 +444,12 @@ def signature(kind, rest):
     if kind in ("var", "let"):
         rest = split_top(rest, "=")[0]
         return " " + tidy(rest).rstrip(":")
+    if kind == "typealias":  # o tipo associado é a própria API do alias
+        parts = split_top(rest, "=")
+        return " " + tidy(parts[0]) + ("=" + tidy("=".join(parts[1:])) if len(parts) > 1 else "")
     start = rest.find("(")
-    if start < 0 or kind == "typealias":
-        return " " + tidy(split_top(rest, "=")[0] if kind == "typealias" else rest).rstrip(":")
+    if start < 0:
+        return " " + tidy(rest).rstrip(":")
     depth, end = 0, start
     for end in range(start, len(rest)):
         depth += {"(": 1, ")": -1}.get(rest[end], 0)
@@ -404,8 +487,10 @@ def compatible(old_key, new_key):
     return True
 
 
-def member_key(owner, kind, rest):
-    return f"{owner}.{kind}{signature(kind, rest)}"
+def member_key(owner, kind, rest, static=False):
+    """static e class func/var são chamados pelo tipo (S.load()); método de
+    instância, pela instância. São APIs diferentes."""
+    return f"{owner}.{'static ' if static else ''}{kind}{signature(kind, rest)}"
 
 
 MEMBER = re.compile(
@@ -441,11 +526,16 @@ def public_api(text):
             member = MEMBER.match(line)
             if member and not EXPLICIT_ACCESS.match(line):
                 if kind_c in ("protocol", "extension") and member.group("kind") != "case":
-                    implicit = (member.group("kind"), member.group("rest"))
+                    implicit = (member.group("kind"), member.group("rest"),
+                                bool(re.search(r"\b(static|class)\b", member.group("mods"))))
                 elif kind_c == "enum" and member.group("kind") == "case":
-                    implicit = ("case", member.group("rest"))
+                    implicit = ("case", member.group("rest"), False)
         if decl or implicit:
-            kind, rest = (decl.group("kind"), decl.group("rest")) if decl else implicit
+            if decl:
+                prefix = line[:decl.start("kind")]
+                kind, rest, static = decl.group("kind"), decl.group("rest"), bool(re.search(r"\b(static|class)\s", prefix))
+            else:
+                kind, rest, static = implicit
             j = i
             while rest.count("(") > rest.count(")") and j + 1 < len(lines):
                 j += 1
@@ -456,7 +546,7 @@ def public_api(text):
                     if case.strip():
                         api[f"{owner}.case {tidy(case)}"] = (i + 1, pending_deprecated)
             elif kind not in TYPE_KINDS:
-                api[member_key(owner, kind, rest)] = (i + 1, pending_deprecated)
+                api[member_key(owner, kind, rest, static)] = (i + 1, pending_deprecated)
         if type_match and direct:
             name = type_match.group("name")
             kind = type_match.group("kind")
@@ -498,6 +588,54 @@ def is_library(read_head, tracked, policy):
     return False
 
 
+TARGET_CALL = re.compile(r"\.(target|executableTarget|testTarget|macro|plugin)\s*\(")
+
+
+def module_map(read_head, tracked):
+    """[(prefixo de diretório, módulo)] dos targets declarados nos Package.swift.
+
+    Só o que o manifesto declara: path: explícito ou o padrão do SwiftPM
+    (Sources/<nome>, Tests/<nome> para testTarget). Diretório que nenhum
+    target cobre fica sem módulo — nunca inventado."""
+    prefixes = []
+    for manifest in tracked:
+        if os.path.basename(manifest) != "Package.swift" or is_fixture_path(manifest):
+            continue
+        raw = read_head(manifest) or ""
+        code = clean(raw)
+        root = os.path.dirname(manifest)
+        for match in TARGET_CALL.finditer(code):
+            open_index = match.end() - 1
+            depth, end = 0, open_index
+            for end in range(open_index, len(code)):
+                depth += {"(": 1, ")": -1}.get(code[end], 0)
+                if depth == 0:
+                    break
+            call = code[open_index:end]
+            name = re.search(r"\bname\s*:\s*\"", call)
+            if not name:
+                continue
+            literal_start = open_index + name.end()
+            literal_end = code.find('"', literal_start)
+            target = raw[literal_start:literal_end]
+            folder = "Tests" if match.group(1) == "testTarget" else "Sources"
+            path = f"{folder}/{target}"
+            custom = re.search(r"\bpath\s*:\s*\"", call)
+            if custom:
+                p_start = open_index + custom.end()
+                path = raw[p_start:code.find('"', p_start)].strip("/")
+            prefix = os.path.normpath(os.path.join(root, path)) if root else os.path.normpath(path)
+            prefixes.append((prefix, f"{manifest}:{target}"))
+    return sorted(prefixes, key=lambda item: -len(item[0]))
+
+
+def module_for(path, prefixes):
+    for prefix, module in prefixes:
+        if path == prefix or path.startswith(prefix + "/"):
+            return module
+    return None
+
+
 def check_public_api(audit, ctx, read_head, read_old):
     changed = [f for f in ctx.files if f["old_path"].endswith(".swift") and f["status"] in ("M", "R", "D")
                and not is_test_path(f["path"]) and not is_fixture_path(f["path"])]
@@ -505,30 +643,54 @@ def check_public_api(audit, ctx, read_head, read_old):
         audit.skipped("API pública: nenhum arquivo Swift existente foi modificado ou removido")
         return
     library = is_library(read_head, ctx.head_files, ctx.policy)
+    prefixes = module_map(read_head, ctx.head_files)
     head_api = {}
     swift_head = [p for p in ctx.head_files if p.endswith(".swift") and not is_test_path(p) and not is_fixture_path(p)]
     for path in swift_head[:3000]:
-        for key, value in public_api(read_head(path) or "").items():
-            head_api.setdefault(key, (path,) + value)
+        module = module_for(path, prefixes)
+        for key, (line, deprecated) in public_api(read_head(path) or "").items():
+            head_api.setdefault(key, []).append((path, line, deprecated, module))
     if len(swift_head) > 3000:
         audit.skipped("API pública: mais de 3000 arquivos Swift; declarações movidas além desse limite não são encontradas")
     severity = "BLOCKER" if library else "WARNING"
     for f in changed:
         old_api = public_api(read_old(f["old_path"]) or "")
         new_api = public_api(read_head(f["path"]) or "") if f["status"] != "D" else {}
-        for key, (line, _) in old_api.items():
-            if key not in head_api:
-                same_name = [k for k in head_api if "(" in key and k.split("(")[0] == key.split("(")[0]]
-                if any(compatible(key, k) for k in same_name):
-                    continue  # só ganhou valor padrão: chamadas antigas continuam válidas
-            if key in head_api:
-                path, new_line, deprecated = head_api[key]
-                if deprecated and not old_api[key][1]:
+        old_module = module_for(f["old_path"], prefixes)
+        new_module = module_for(f["path"], prefixes)
+        # arquivo renomeado só continua no mesmo módulo se ficou no mesmo diretório
+        # ou se os dois caminhos caem no mesmo target declarado
+        stays = os.path.dirname(f["old_path"]) == os.path.dirname(f["path"]) or \
+            (old_module is not None and old_module == new_module)
+        file_module = old_module if stays else new_module
+        for key, (line, old_deprecated) in old_api.items():
+            same_file = [(f["path"], new_api[key][0], new_api[key][1], file_module)] if key in new_api else []
+            exact = same_file or head_api.get(key, [])
+            candidates = list(exact)
+            if not candidates and "(" in key:  # mesma chamada continua válida (ex.: só ganhou padrão)
+                candidates = [entry for other, entries in head_api.items()
+                              if other.split("(")[0] == key.split("(")[0] and compatible(key, other)
+                              for entry in entries]
+            local = [c for c in candidates if (c in same_file and stays) or (old_module and c[3] == old_module)]
+            if local:
+                path, new_line, deprecated, _ = local[0]
+                if deprecated and not old_deprecated and local[0] in exact:
                     audit.add(Finding(
                         "SWIFT-API-DEPRECATED", "INFO", f"{key} mantida e marcada como deprecated em {path}:{new_line}",
                         "deprecated preserva a compilação, não o comportamento",
                         "confirmar que a API antiga delega para a nova e tem teste comparando as duas",
                         "heurística", "média", file=path, line=new_line))
+                continue
+            uncertain = bool(candidates) and (old_module is None or any(c[3] is None for c in candidates))
+            if uncertain:
+                where = ", ".join(sorted({c[0] for c in candidates}))
+                audit.add(Finding(
+                    "SWIFT-API-ORIGIN-UNKNOWN", "WARNING",
+                    f"{key} saiu de {f['old_path']} e há declaração equivalente em {where}, "
+                    "mas o módulo de origem não pôde ser determinado pelos Package.swift",
+                    "se a declaração equivalente for de outro módulo, a API foi removida para os consumidores",
+                    "confirmar que a declaração continua no mesmo módulo/target",
+                    "heurística", "baixa", file=f["path"]))
                 continue
             similar = [k for k in new_api if "(" in key and k.split("(")[0] == key.split("(")[0]
                        and k != key and k not in old_api]
@@ -538,6 +700,9 @@ def check_public_api(audit, ctx, read_head, read_old):
                 what = f"assinatura alterada (agora: {similar[0]})"
             else:
                 what = "declaração pública removida"
+            if candidates:  # só existe em outro módulo, conhecido
+                others = ", ".join(sorted({c[3].split(":")[-1] for c in candidates}))
+                what += f"; homônimo em outro módulo ({others}) não substitui"
             audit.add(Finding(
                 "SWIFT-API-BREAK", severity, f"{what}: {key} (base, linha {line})",
                 "quebra consumidores do módulo" if library else
@@ -694,25 +859,52 @@ def coding_keys(text):
     return keys
 
 
+def type_body(code, name):
+    match = re.search(r"\b(?:struct|class|enum|actor)\s+" + re.escape(name) + r"\b[^{]*\{", code)
+    return code[match.end() - 1:block_end(code, match.end() - 1)] if match else None
+
+
 def check_coding_keys(audit, ctx, read_head, read_old):
     for f in ctx.swift_files:
         if f["status"] not in ("M", "R") or is_test_path(f["path"]):
             continue
         old = coding_keys(read_old(f["old_path"]) or "")
-        new = coding_keys(read_head(f["path"]) or "")
+        new_text = read_head(f["path"]) or ""
+        new = coding_keys(new_text)
+        new_code = clean(new_text)
         for type_name, old_keys in old.items():
-            if type_name not in new:
+            if type_name in new:
+                new_values = set(new[type_name].values())
+                removed = sorted(v for v in set(old_keys.values()) if v not in new_values)
+                if removed:
+                    audit.add(Finding(
+                        "SWIFT-CONTRACT-KEYS", "WARNING",
+                        f"{type_name}.CodingKeys deixou de mapear {', '.join(repr(r) for r in removed)}",
+                        "payload legado muda: o campo some do encode ou deixa de ser lido no decode",
+                        "confirmar no contrato do backend; se a versão antiga continua ativa, versionar em vez de trocar",
+                        "determinística", "alta", file=f["path"]))
                 continue
-            new_values = set(new[type_name].values())
-            removed = sorted(v for v in set(old_keys.values()) if v not in new_values)
-            if removed:
+            body = type_body(new_code, type_name)
+            if body is None:
+                continue  # o tipo saiu: a comparação de API pública trata a remoção
+            if re.search(r"\binit\s*\(\s*from\s+\w+\s*:\s*Decoder|\bfunc\s+encode\s*\(\s*to\s+\w+\s*:\s*Encoder", body):
+                audit.add(Finding(
+                    "SWIFT-CONTRACT-KEYS", "INFO",
+                    f"{type_name}.CodingKeys removida; o tipo implementa encode/decode explicitamente",
+                    "o contrato depende das chaves usadas nessa implementação",
+                    "confirmar que as chaves antigas continuam sendo lidas e escritas",
+                    "heurística", "média", file=f["path"]))
+                continue
+            renamed = sorted((name, raw) for name, raw in old_keys.items() if raw != name)
+            if renamed:
                 audit.add(Finding(
                     "SWIFT-CONTRACT-KEYS", "WARNING",
-                    f"{type_name}.CodingKeys deixou de mapear {', '.join(repr(r) for r in removed)}",
-                    "payload legado muda: o campo some do encode ou deixa de ser lido no decode",
-                    "confirmar no contrato do backend; se a versão antiga continua ativa, versionar em vez de trocar",
-                    "determinística", "alta", file=f["path"]))
-    audit.checked("contrato: chaves de CodingKeys de tipos existentes comparadas com a base")
+                    f"{type_name}.CodingKeys removida: " + ", ".join(f"'{raw}' passa a ser '{name}'" for name, raw in renamed),
+                    "com Codable sintetizado o payload muda, salvo keyDecodingStrategy/keyEncodingStrategy "
+                    "configurada para produzir as chaves antigas",
+                    "manter o mapeamento ou confirmar a estratégia de chaves do encoder/decoder e o contrato",
+                    "heurística", "média", file=f["path"]))
+    audit.checked("contrato: CodingKeys de tipos existentes comparadas com a base, inclusive remoção da enum")
 
 
 # ---------------------------------------------------------------------

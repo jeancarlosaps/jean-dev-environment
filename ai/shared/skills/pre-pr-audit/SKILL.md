@@ -113,10 +113,11 @@ Swift/iOS (quando há `.swift` alterado):
 |---|---|
 | `SWIFT-AVAILABILITY` API acima da plataforma mínima, fora de `#available`/`@available`/`#unavailable … else` (tabela curada) | BLOCKER só quando comprovado; WARNING quando há dúvida (abaixo) |
 | `SWIFT-API-BREAK` declaração `public`/`open`, membro de `public extension`, `case` de `public enum`, requisito de protocolo público ou conformidade da base sem equivalente compatível no HEAD (inclui arquivos excluídos) | determinística no nível da declaração |
+| `SWIFT-API-ORIGIN-UNKNOWN` declaração saiu de um arquivo e há equivalente em outro, mas o módulo de algum dos lados não é determinável pelos `Package.swift` | heurística |
 | `SWIFT-API-DEPRECATED` API antiga mantida como deprecated — confirmar delegação e teste | heurística |
 | `SWIFT-PROTOCOL-REQUIREMENT` requisito novo em protocolo público sem implementação padrão | heurística |
 | `SWIFT-PIPELINE-DUPLICATED` cases de `switch` de versão com a mesma cadeia de operadores (idêntica, ou uma só acrescentando operadores) | heurística |
-| `SWIFT-CONTRACT-KEYS` chave de `CodingKeys` removida/renomeada em tipo existente | determinística |
+| `SWIFT-CONTRACT-KEYS` chave de `CodingKeys` removida/renomeada em tipo existente (determinística); `CodingKeys` removida com mapeamento diferente do nome sintetizado (WARNING) ou com encode/decode explícito (INFO) | determinística / heurística |
 | `SWIFT-MUTATION-FALLBACK` função de mutação que, no caminho de erro, chama versão anterior | heurística |
 | `SWIFT-CONCURRENCY-UNSAFE` `@unchecked Sendable`, `nonisolated(unsafe)` | determinística |
 | `SWIFT-DEPRECATED-NO-MESSAGE` deprecated sem `message:`/`renamed:` (fora de testes) | determinística |
@@ -132,15 +133,28 @@ que não está comprovado:
 - a plataforma mínima vem do `Package.swift` mais próximo do arquivo, da
   política, ou de um `project.pbxproj` com um único valor por plataforma;
 - o uso não está dentro de `#if … #endif`;
-- nenhuma proteção cobre o uso: `if #available`, `guard #available`,
-  `@available(iOS 16, *)`, `@available(iOS, introduced: 16)` ou o `else`
-  de `if #unavailable`.
+- nenhuma proteção cobre o uso: `#available` em qualquer posição da lista
+  de condições de `if`, `guard` ou `while`; `@available(iOS 16, *)` ou
+  `@available(iOS, introduced: 16)` na declaração que contém o uso (o
+  atributo de uma declaração sem corpo, como `typealias`, não protege a
+  seguinte); ou o `else` de `if #unavailable`.
 
 ### Compatibilidade de assinatura
 
 A comparação usa rótulo externo, tipo e se o argumento pode ser omitido.
 Trocar só o nome local ou o valor de um padrão, ou acrescentar um padrão,
-não é quebra; remover um padrão ou trocar um rótulo externo é.
+não é quebra; remover um padrão ou trocar um rótulo externo é. `static` e
+`class` (do tipo) diferem de membro de instância, e o tipo de um
+`typealias` público faz parte da API.
+
+### Módulo de origem
+
+O módulo de cada declaração vem dos targets dos `Package.swift` (`path:`
+ou `Sources/<nome>`, `Tests/<nome>`). Declaração que sai de um arquivo e
+reaparece no mesmo módulo foi movida; homônimo que só existe em outro
+módulo não substitui a API removida. Se algum dos lados não pertence a
+target declarado (projeto Xcode, diretório solto), o resultado é
+`SWIFT-API-ORIGIN-UNKNOWN`, nunca BLOCKER.
 
 ## 5. Limites
 
