@@ -209,8 +209,10 @@ def statement_keyword(code, at):
     return (match.group(1), j + 1 + match.end()) if match else None
 
 
-def condition_body(code, start):
-    """Índice da { que abre o corpo do comando: a primeira fora de parênteses."""
+def scan_to_body(code, start, stop_at_declaration=False):
+    """("{", i) da chave do corpo, a primeira fora de parênteses e colchetes;
+    ("fim", i) na quebra de linha que antecede outra declaração, se pedido;
+    ("fim", len(code)) se não houver corpo."""
     depth = 0
     for j in range(start, len(code)):
         c = code[j]
@@ -219,8 +221,16 @@ def condition_body(code, start):
         elif c in ")]":
             depth -= 1
         elif c == "{" and depth == 0:
-            return j
-    return -1
+            return "{", j
+        elif stop_at_declaration and c == "\n" and depth == 0 and DECL_START.match(code, j + 1):
+            return "fim", j
+    return "fim", len(code)
+
+
+def condition_body(code, start):
+    """Índice da { que abre o corpo do comando, ou -1."""
+    kind, index = scan_to_body(code, start)
+    return index if kind == "{" else -1
 
 
 def rest_of_block(code, start):
@@ -250,19 +260,8 @@ def declaration_extent(code, start):
     if kind and kind.group(1) in BODYLESS:
         end = code.find("\n", start)
         return len(code) if end < 0 else end
-    depth, j = 0, start
-    while j < len(code):
-        c = code[j]
-        if c in "([":
-            depth += 1
-        elif c in ")]":
-            depth -= 1
-        elif c == "{" and depth == 0:
-            return block_end(code, j)
-        elif c == "\n" and depth == 0 and DECL_START.match(code, j + 1):
-            return j  # a próxima linha já é outra declaração: esta não tem corpo
-        j += 1
-    return len(code)
+    kind, index = scan_to_body(code, start, stop_at_declaration=True)
+    return block_end(code, index) if kind == "{" else index  # sem corpo: termina antes da próxima declaração
 
 
 def guarded_regions(code):
