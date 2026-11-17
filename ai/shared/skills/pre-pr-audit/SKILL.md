@@ -112,7 +112,7 @@ Swift/iOS (quando há `.swift` alterado):
 | Regra | Método |
 |---|---|
 | `SWIFT-AVAILABILITY` API acima da plataforma mínima, fora de `#available`/`@available`/`#unavailable … else` (tabela curada) | BLOCKER só quando comprovado; WARNING quando há dúvida (abaixo) |
-| `SWIFT-API-BREAK` declaração `public`/`open` ou conformidade da base ausente no HEAD | determinística no nível da declaração |
+| `SWIFT-API-BREAK` declaração `public`/`open`, membro de `public extension`, `case` de `public enum`, requisito de protocolo público ou conformidade da base sem equivalente compatível no HEAD (inclui arquivos excluídos) | determinística no nível da declaração |
 | `SWIFT-API-DEPRECATED` API antiga mantida como deprecated — confirmar delegação e teste | heurística |
 | `SWIFT-PROTOCOL-REQUIREMENT` requisito novo em protocolo público sem implementação padrão | heurística |
 | `SWIFT-PIPELINE-DUPLICATED` cases de `switch` de versão com a mesma cadeia de operadores (idêntica, ou uma só acrescentando operadores) | heurística |
@@ -136,8 +136,19 @@ que não está comprovado:
   `@available(iOS 16, *)`, `@available(iOS, introduced: 16)` ou o `else`
   de `if #unavailable`.
 
+### Compatibilidade de assinatura
+
+A comparação usa rótulo externo, tipo e se o argumento pode ser omitido.
+Trocar só o nome local ou o valor de um padrão, ou acrescentar um padrão,
+não é quebra; remover um padrão ou trocar um rótulo externo é.
+
 ## 5. Limites
 
+- Erro de leitura do git, política ou evidência inválida, caminho com quebra
+  de linha ou erro interno encerram com status 2: a auditoria nunca devolve
+  relatório vazio com status 0 por falha própria.
+- Nenhum texto de achado sai com credencial reconhecível: todo achado é
+  mascarado antes do relatório, seja qual for a regra.
 - Sem compilador: tipos, sobrecargas, macros e código gerado não são
   resolvidos. Declarações com cabeçalho em várias linhas antes da `{` do
   tipo podem escapar.

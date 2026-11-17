@@ -304,6 +304,175 @@ g add -A; g commit -q -m dup
 run
 expect_count "bloco repetido em dois arquivos: 1 WARNING" CORE-DUPLICATION WARNING 1
 
+# --- review do PR: falha fechada da política e da evidência -------------
+build tests-missing
+for bad in '{"ignore_paths": "x*"}' '{"scope_paths": "Sources/*"}' '{"required_checks": "tests"}' \
+           '{"verb_synonyms": ["del", "remove"]}' '{"min_platforms": ["15"]}' '{"min_platforms": {"ios": "quinze"}}' \
+           '{"library": "sim"}' '[]'; do
+  printf '%s\n' "$bad" > "$work/bad.json"
+  run --policy "$work/bad.json"
+  expect_status "política com tipo inválido ($bad): erro, nunca relatório vazio" 2
+done
+for bad in '{"checks": "tests"}' '{"checks": [{"name": "tests", "exit": "0"}]}' '{"checks": [{"exit": 0}]}'; do
+  printf '%s\n' "$bad" > "$work/bad.json"
+  run --evidence "$work/bad.json"
+  expect_status "evidência inválida ($bad): erro" 2
+done
+printf '{"ignore_paths": ["Sources/Shop/Nada/*"]}\n' > "$work/ok.json"
+run --policy "$work/ok.json"
+expect_status "ignore_paths válido não ignora o resto" 0
+expect_count "ignore_paths válido mantém a auditoria do diff" CORE-TESTS-MISSING WARNING 1
+
+# --- review do PR: caminhos Unicode, espaços, renomeação e exclusão -----
+build pipeline-unified
+token="gh""p_$(printf 'B%.0s' $(seq 1 36))"
+mkdir -p "$repo/Sources/Shop/Configuração Avançada"
+printf 'let chave = "%s"\nfunc espera() async throws { try await Task.sleep(for: .seconds(1)) }\n' "$token" \
+  > "$repo/Sources/Shop/Configuração Avançada/Ação de Teste.swift"
+mkdir -p "$repo/Módulos/Novo/Sources/Novo"
+printf '// swift-tools-version:5.9\nimport PackageDescription\nlet package = Package(name: "Novo", platforms: [.iOS("17.0"), .macOS("14.0")])\n' > "$repo/Módulos/Novo/Package.swift"
+printf 'func pausa() async throws { try await Task.sleep(for: .seconds(1)) }\n' > "$repo/Módulos/Novo/Sources/Novo/Pausa.swift"
+g add -A; g commit -q -m unicode
+run
+expect_status "caminho Unicode com espaço e credencial: BLOCKER, não diff ignorado" 1
+if jq -e --arg f "Sources/Shop/Configuração Avançada/Ação de Teste.swift" \
+    '[.findings[] | select(.file == $f) | .rule] | (index("CORE-SECRET") != null and index("SWIFT-AVAILABILITY") != null)' "$work/out.json" >/dev/null; then
+  ok "arquivo com acento e espaço auditado pelo caminho real"; else fail "caminho Unicode" "arquivo ausente ou caminho escapado"; fi
+expect_avail "Package.swift em diretório acentuado com .iOS(\"17.0\") vale para o submódulo" "Módulos/Novo/Sources/Novo/Pausa.swift" ""
+
+build pipeline-unified
+printf 'public struct Antiga {\n    public init() {}\n    public func valor() -> Int { 1 }\n}\n' > "$repo/Sources/Shop/Antiga.swift"
+g add -A; g commit -q -m base-extra; g branch -f main HEAD
+g mv "Sources/Shop/Antiga.swift" "Sources/Shop/Nova Pasta Ação/Antiga.swift" 2>/dev/null || {
+  mkdir -p "$repo/Sources/Shop/Nova Pasta Ação"; g mv "Sources/Shop/Antiga.swift" "Sources/Shop/Nova Pasta Ação/Antiga.swift"; }
+g commit -q -m rename
+run
+expect_count "renomeação de arquivo com API pública intacta: sem quebra" SWIFT-API-BREAK "" 0
+expect_count "renomeação pura: sem linhas adicionadas a auditar" CORE-TESTS-MISSING "" 0
+g rm -q "Sources/Shop/Nova Pasta Ação/Antiga.swift"; g commit -q -m delete
+run
+expect_count "exclusão de arquivo com tipo público: quebra detectada" SWIFT-API-BREAK BLOCKER 3
+expect_evidence "exclusão cita o tipo removido" SWIFT-API-BREAK "<global>.struct Antiga"
+
+build pipeline-unified
+printf 'struct Interna {\n    func valor() -> Int { 1 }\n}\n' > "$repo/Sources/Shop/Interna.swift"
+g add -A; g commit -q -m base-interna; g branch -f main HEAD
+g rm -q Sources/Shop/Interna.swift; g commit -q -m delete-interna
+run
+expect_count "exclusão de tipo interno: sem quebra de API" SWIFT-API-BREAK "" 0
+if jq -e 'any(.not_evaluated[]; contains("só exclusões"))' "$work/out.json" >/dev/null; then
+  ok "diff só com exclusão declara o que não avaliou"; else fail "só exclusões" "sem declaração"; fi
+
+printf 'x\n' > "$repo/arquivo
+quebrado.swift"
+g add -A; g commit -q -m newline
+run
+expect_status "caminho com quebra de linha: erro, nunca relatório vazio" 2
+
+# --- review do PR: compatibilidade de API pública -----------------------
+api_case() {  # api_case <antes> <depois>: monta main/feature com Sources/Shop/Api.swift
+  build pipeline-unified
+  printf '%s\n' "$1" > "$repo/Sources/Shop/Api.swift"
+  g add -A; g commit -q -m api-base; g branch -f main HEAD
+  printf '%s\n' "$2" > "$repo/Sources/Shop/Api.swift"
+  g add -A; g commit -q -m api-change
+  run
+}
+api_case 'public struct S {
+    public func find(id: String = "") {}
+}' 'public struct S {
+    public func find(id: String) {}
+}'
+expect_count "remover valor padrão quebra quem omite o argumento: BLOCKER" SWIFT-API-BREAK BLOCKER 1
+api_case 'public struct S {
+    public func find(id: String) {}
+}' 'public struct S {
+    public func find(id: String = "") {}
+}'
+expect_count "acrescentar valor padrão não quebra chamadas: sem achado" SWIFT-API-BREAK "" 0
+api_case 'public struct S {
+    public func find(id: String = "a") {}
+}' 'public struct S {
+    public func find(id: String = "b") {}
+}'
+expect_count "trocar só o valor do padrão: sem achado" SWIFT-API-BREAK "" 0
+api_case 'public struct S {
+    public func find(id value: String) {}
+}' 'public struct S {
+    public func find(id item: String) {}
+}'
+expect_count "trocar só o nome local do parâmetro: sem achado" SWIFT-API-BREAK "" 0
+api_case 'public struct S {
+    public func find(id value: String) {}
+}' 'public struct S {
+    public func find(key value: String) {}
+}'
+expect_count "trocar o rótulo externo: BLOCKER" SWIFT-API-BREAK BLOCKER 1
+api_case 'public struct S {}
+public extension S {
+    func removeItem(id: String) {}
+    private func hidden() {}
+}' 'public struct S {}
+public extension S {
+    private func hidden2() {}
+}'
+expect_count "membro de public extension removido: BLOCKER" SWIFT-API-BREAK BLOCKER 1
+expect_evidence "membro de public extension identificado" SWIFT-API-BREAK "S.func removeItem(id:String)"
+api_case 'public struct S {}
+extension S {
+    func removeItem(id: String) {}
+}' 'public struct S {}
+extension S {
+}'
+expect_count "membro de extensão interna removido: sem achado" SWIFT-API-BREAK "" 0
+api_case 'public struct S {}
+public extension S {
+    func removeItem(id: String) {}
+}' 'public struct S {
+    public func removeItem(id: String) {}
+}'
+expect_count "membro movido de public extension para declaração public: sem achado" SWIFT-API-BREAK "" 0
+api_case 'public enum Mode {
+    case fast
+    case slow(Int)
+    func f() -> Int { switch self { case .fast: return 1; case .slow: return 2 } }
+}' 'public enum Mode {
+    case fast
+    func f() -> Int { switch self { case .fast: return 1 } }
+}'
+expect_count "case removido de enum público: BLOCKER" SWIFT-API-BREAK BLOCKER 1
+expect_evidence "case removido identificado" SWIFT-API-BREAK "Mode.case slow(Int)"
+api_case 'enum Mode {
+    case fast
+    case slow
+}' 'enum Mode {
+    case fast
+}'
+expect_count "case removido de enum interno: sem achado" SWIFT-API-BREAK "" 0
+api_case 'public enum Code: Int {
+    case ok = 200
+}' 'public enum Code: Int {
+    case ok = 201
+}'
+expect_count "valor bruto de case alterado não é quebra de assinatura" SWIFT-API-BREAK "" 0
+
+# --- review do PR: credencial nunca reexposta no relatório -------------
+build pipeline-unified
+token="gh""p_$(printf 'C%.0s' $(seq 1 36))"
+printf 'public final class Box: @unchecked Sendable { let k = "%s"; func w() async throws { try await Task.sleep(for: .seconds(1)) } }\n' "$token" \
+  > "$repo/Sources/Shop/Box.swift"
+printf 'let apiKey = "%s"\n' "$token" > "$repo/Sources/Shop/Keys.swift"
+g add -A; g commit -q -m leak
+run
+same_line=$(jq '[.findings[] | select(.file == "Sources/Shop/Box.swift" and .line == 1)] | length' "$work/out.json")
+if [ "$same_line" -ge 3 ]; then ok "três ou mais achados na mesma linha com credencial ($same_line)"; else fail "achados na mesma linha" "$same_line"; fi
+python3 "$AUDIT" --repo "$repo" --base main > "$work/out.md" 2>/dev/null || true
+for format in json md; do
+  if grep -q "${token:0:10}" "$work/out.$format"; then fail "nenhum trecho da credencial no relatório ($format)" "token exposto"
+  else ok "nenhum trecho da credencial no relatório ($format)"; fi
+done
+expect_evidence "evidência de concorrência sem o literal" SWIFT-CONCURRENCY-UNSAFE "@unchecked Sendable"
+
 # --- reprodutibilidade e formatos --------------------------------------
 build pipeline-duplicated; run; cp "$work/out.json" "$work/first.json"; run
 if cmp -s "$work/first.json" "$work/out.json"; then ok "duas execuções produzem o mesmo JSON"; else fail "reprodutível" "saídas diferentes"; fi

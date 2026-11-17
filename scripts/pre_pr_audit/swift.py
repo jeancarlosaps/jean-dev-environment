@@ -130,11 +130,19 @@ def show_version(version):
 
 
 def manifest_platforms(text):
+    """Plataformas de um Package.swift. A declaração é localizada no código sem
+    comentários; o literal de .iOS("15.0") é lido no texto original, na mesma
+    posição (a limpeza apaga o conteúdo das strings, mas preserva posições)."""
     found = {}
     code = clean(text)
     for name, key in PLATFORMS.items():
-        for match in re.finditer(r"\." + name + r"\s*\(\s*(?:\.v(\d+(?:_\d+)*)|\"([\d.]+)\")\s*\)", code):
-            found[key] = parse_version(match.group(1) or match.group(2))
+        for match in re.finditer(r"\." + name + r"\s*\(\s*(?:\.v(\d+(?:_\d+)*)|\"([^\"\n]*)\")\s*\)", code):
+            if match.group(1):
+                found[key] = parse_version(match.group(1))
+            else:
+                literal = text[match.start(2):match.end(2)]
+                if re.fullmatch(r"\d+(\.\d+)*", literal):
+                    found[key] = parse_version(literal)
     return found
 
 
@@ -315,24 +323,103 @@ def collapse(text):
     return re.sub(r"\s+", " ", text).strip()
 
 
+def tidy(text):
+    text = collapse(text)
+    text = re.sub(r"\s*->\s*", "->", text)
+    return re.sub(r"\s*([(),:<>\[\]?!&])\s*", r"\1", text)
+
+
+def split_top(text, sep=","):
+    """Divide por sep fora de (), [], {} e <> (exceto o > de ->)."""
+    parts, depth, start, i = [], 0, 0, 0
+    while i < len(text):
+        c = text[i]
+        if c in "([{<":
+            depth += 1
+        elif c in ")]}" or (c == ">" and text[i - 1:i] != "-"):
+            depth -= 1
+        elif c == sep and depth == 0:
+            parts.append(text[start:i]); start = i + 1
+        i += 1
+    parts.append(text[start:])
+    return parts
+
+
+def canonical_param(param):
+    """'label nome: Tipo = padrão' → 'label:Tipo' (+ '=' se aceita omissão).
+
+    O nome local e o valor do padrão não mudam a chamada; o rótulo externo,
+    o tipo e a possibilidade de omitir o argumento mudam.
+    """
+    head, _, after = param.partition(":")
+    pieces = split_top(after, "=")
+    type_text, has_default = pieces[0], len(pieces) > 1
+    names = [n for n in head.split() if not n.startswith("@")]
+    label = names[0] if names else "_"
+    return f"{label}:{tidy(type_text)}" + ("=" if has_default else "")
+
+
 def signature(kind, rest):
     rest = rest.split("{")[0]
     if kind in ("var", "let"):
-        rest = re.split(r"=", rest)[0]
-    rest = re.sub(r"=\s*[^,)]+", "", rest)  # valores padrão não mudam a assinatura do chamador
-    sig = collapse(rest).rstrip(":").rstrip()
-    # forma canônica: quebra de linha e espaço junto de pontuação não mudam a assinatura
-    sig = re.sub(r"\s*([(),:<>\[\]?!])\s*", r"\1", sig)
-    sig = re.sub(r"\s*->\s*", "->", sig).replace(",)", ")")
+        rest = split_top(rest, "=")[0]
+        return " " + tidy(rest).rstrip(":")
+    start = rest.find("(")
+    if start < 0 or kind == "typealias":
+        return " " + tidy(split_top(rest, "=")[0] if kind == "typealias" else rest).rstrip(":")
+    depth, end = 0, start
+    for end in range(start, len(rest)):
+        depth += {"(": 1, ")": -1}.get(rest[end], 0)
+        if depth == 0:
+            break
+    name = tidy(rest[:start])
+    params = [canonical_param(p) for p in split_top(rest[start + 1:end]) if p.strip()]
+    sig = f"{name}({','.join(params)}){tidy(rest[end + 1:])}"
     return sig if sig.startswith(("(", "<")) else " " + sig
+
+
+def parse_key(key):
+    """'Dono.func nome(a:Int=,b:String)->X' → (prefixo, [parâmetros], sufixo)."""
+    start = key.find("(")
+    if start < 0:
+        return None
+    depth = 0
+    for end in range(start, len(key)):
+        depth += {"(": 1, ")": -1}.get(key[end], 0)
+        if depth == 0:
+            break
+    return key[:start], [p for p in split_top(key[start + 1:end]) if p], key[end + 1:]
+
+
+def compatible(old_key, new_key):
+    """A chamada da API antiga continua válida na nova? Só aceita padrão novo."""
+    old, new = parse_key(old_key), parse_key(new_key)
+    if not old or not new or old[0] != new[0] or old[2] != new[2] or len(old[1]) != len(new[1]):
+        return False
+    for before, after in zip(old[1], new[1]):
+        if before.rstrip("=") != after.rstrip("="):
+            return False
+        if before.endswith("=") and not after.endswith("="):
+            return False
+    return True
 
 
 def member_key(owner, kind, rest):
     return f"{owner}.{kind}{signature(kind, rest)}"
 
 
+MEMBER = re.compile(
+    r"^\s*(?:@[A-Za-z_]+(?:\([^)]*\))?\s+)*"
+    r"(?P<mods>(?:(?:static|class|final|override|mutating|nonmutating|convenience|required|dynamic|lazy|nonisolated|async|private\(set\)|internal\(set\)|fileprivate\(set\))\s+)*)"
+    r"(?P<kind>func|init|var|let|subscript|typealias|associatedtype|case)\b(?P<rest>.*)$")
+EXPLICIT_ACCESS = re.compile(r"^\s*(?:@[A-Za-z_]+(?:\([^)]*\))?\s+)*(?:\w+\s+)*?(public|open|internal|fileprivate|private|package)\b")
+
+
 def public_api(text):
-    """{chave: (linha, deprecated)} de declarações public/open e conformidades."""
+    """{chave: (linha, deprecated)} da API pública: declarações public/open,
+    conformidades, requisitos de protocolo público, membros sem modificador
+    de public extension e cases de public enum. Só membros diretos do tipo
+    entram (nada declarado dentro de funções)."""
     code = clean(text)
     lines = code.split("\n")
     api, stack, depth = {}, [], 0
@@ -340,41 +427,54 @@ def public_api(text):
     i = 0
     while i < len(lines):
         line = lines[i]
+        line_depth = depth
         if re.search(r"@available\s*\(\s*\*\s*,\s*deprecated", line):
             pending_deprecated = True
         type_match = TYPE_DECL.match(line)
         owner = ".".join(name for name, _, _, _ in stack) or "<global>"
-        decl = DECL.match(line)
-        in_public_protocol = bool(stack) and stack[-1][1] == "protocol" and stack[-1][3]
-        member = PROTOCOL_MEMBER.match(line) if in_public_protocol and not type_match else None
-        if member:
-            rest = member.group("rest")
-            api[member_key(owner, member.group("kind"), rest)] = (i + 1, pending_deprecated)
-        elif decl:
-            kind = decl.group("kind")
-            rest = decl.group("rest")
+        direct = not stack or line_depth == stack[-1][2] + 1
+        decl = DECL.match(line) if direct else None
+        container = stack[-1] if stack else None
+        implicit = None
+        if direct and container and container[3] and not type_match and not decl:
+            kind_c = container[1]
+            member = MEMBER.match(line)
+            if member and not EXPLICIT_ACCESS.match(line):
+                if kind_c in ("protocol", "extension") and member.group("kind") != "case":
+                    implicit = (member.group("kind"), member.group("rest"))
+                elif kind_c == "enum" and member.group("kind") == "case":
+                    implicit = ("case", member.group("rest"))
+        if decl or implicit:
+            kind, rest = (decl.group("kind"), decl.group("rest")) if decl else implicit
             j = i
             while rest.count("(") > rest.count(")") and j + 1 < len(lines):
                 j += 1
                 rest += " " + lines[j]
             if kind == "case":
-                for name in re.split(r",", rest.split("{")[0]):
-                    key = f"{owner}.case {collapse(name)}"
-                    api[key] = (i + 1, pending_deprecated)
+                for case in split_top(rest.split("{")[0]):
+                    case = split_top(case, "=")[0]  # valor bruto não é parte da API de chamada
+                    if case.strip():
+                        api[f"{owner}.case {tidy(case)}"] = (i + 1, pending_deprecated)
             elif kind not in TYPE_KINDS:
                 api[member_key(owner, kind, rest)] = (i + 1, pending_deprecated)
-        if type_match:
+        if type_match and direct:
             name = type_match.group("name")
             kind = type_match.group("kind")
-            public_type = bool(decl) or kind == "extension"
-            if public_type and type_match.group("inherits"):
+            if kind == "extension":
+                is_public = bool(re.search(r"\b(public|open)\s+extension\b", line))
+            else:
+                is_public = bool(decl)
+            if (is_public or kind == "extension") and type_match.group("inherits"):
                 for conformance in type_match.group("inherits").split(","):
                     conformance = collapse(conformance)
                     if conformance:
                         api[f"conformidade {name}: {conformance}"] = (i + 1, False)
             if decl and kind != "extension":
                 api[f"{owner}.{kind} {name}"] = (i + 1, pending_deprecated)
-            stack.append((name, kind, depth, bool(decl)))
+            # extensão adiciona membros ao tipo estendido, não a um tipo aninhado
+            stack.append((name, kind, line_depth, is_public))
+        elif type_match:
+            stack.append((type_match.group("name"), type_match.group("kind"), line_depth, False))
         if line.strip() and not line.strip().startswith("@"):
             pending_deprecated = False
         for ch in line:
@@ -417,6 +517,10 @@ def check_public_api(audit, ctx, read_head, read_old):
         old_api = public_api(read_old(f["old_path"]) or "")
         new_api = public_api(read_head(f["path"]) or "") if f["status"] != "D" else {}
         for key, (line, _) in old_api.items():
+            if key not in head_api:
+                same_name = [k for k in head_api if "(" in key and k.split("(")[0] == key.split("(")[0]]
+                if any(compatible(key, k) for k in same_name):
+                    continue  # só ganhou valor padrão: chamadas antigas continuam válidas
             if key in head_api:
                 path, new_line, deprecated = head_api[key]
                 if deprecated and not old_api[key][1]:
@@ -660,7 +764,7 @@ def check_hygiene(audit, ctx):
             if re.search(r"@unchecked\s+Sendable|nonisolated\s*\(\s*unsafe\s*\)", code):
                 audit.add(Finding(
                     "SWIFT-CONCURRENCY-UNSAFE", "WARNING",
-                    f"isolamento desligado manualmente: {collapse(text)[:80]}",
+                    f"isolamento desligado manualmente: {collapse(code)[:80]}",
                     "o compilador deixa de verificar acesso concorrente a este estado",
                     "provar a sincronização (lock, actor, imutabilidade) num comentário de contrato ou remover",
                     "determinística", "alta", file=f["path"], line=line_no))
@@ -682,12 +786,17 @@ def check_hygiene(audit, ctx):
 
 
 def run(audit, ctx):
-    if not ctx.swift_files:
+    swift_changed = [f for f in ctx.files if (f["path"].endswith(".swift") or f["old_path"].endswith(".swift"))
+                     and not is_fixture_path(f["path"])]
+    if not swift_changed:
         audit.skipped("camada Swift: nenhum arquivo .swift alterado")
+        return
+    check_public_api(audit, ctx, ctx.read_head, ctx.read_old)  # inclui arquivos excluídos
+    if not ctx.swift_files:
+        audit.skipped("camada Swift: só exclusões; demais verificações dependem de arquivos existentes")
         return
     check_versioned_pipeline(audit, ctx, ctx.read_head)
     check_availability(audit, ctx, ctx.read_head)
-    check_public_api(audit, ctx, ctx.read_head, ctx.read_old)
     check_coding_keys(audit, ctx, ctx.read_head, ctx.read_old)
     check_mutation_fallback(audit, ctx, ctx.read_head)
     check_hygiene(audit, ctx)

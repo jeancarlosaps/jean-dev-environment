@@ -1,5 +1,7 @@
 """Achados, contexto da auditoria e o que foi ou não verificado."""
 
+from .credentials import redact
+
 SEVERITIES = ("BLOCKER", "WARNING", "INFO")
 
 
@@ -33,6 +35,8 @@ class Audit:
         self.not_evaluated = []
 
     def add(self, finding):
+        for field in ("evidence", "impact", "recommendation"):
+            finding[field] = redact(finding[field])
         self.findings.append(finding)
 
     def checked(self, text):

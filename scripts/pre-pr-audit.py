@@ -23,6 +23,7 @@ import argparse
 import fnmatch
 import json
 import os
+import re
 import sys
 
 sys.dont_write_bytecode = True  # não deixa __pycache__ no repositório auditado nem neste
@@ -42,7 +43,7 @@ class Context:
         self.merge_base = gitdiff.merge_base(self.repo, self.base)
         self.head = gitdiff.git(self.repo, "rev-parse", "HEAD").strip()
         self.policy, self.policy_path = load_policy(self.repo, args.policy)
-        self.evidence = load_json(args.evidence, "evidência") if args.evidence else {}
+        self.evidence = load_evidence(args.evidence) if args.evidence else {}
         self.scope = args.scope or []
         self.covered = []
         self._head, self._old = {}, {}
@@ -51,7 +52,8 @@ class Context:
         for f in gitdiff.changed_files(self.repo, self.merge_base):
             if any(fnmatch.fnmatch(f["path"], g) for g in ignore):
                 continue
-            f["added"] = gitdiff.added_lines(self.repo, self.merge_base, f["path"]) if f["status"] != "D" else []
+            f["added"] = (gitdiff.added_lines(self.repo, self.merge_base, f["path"], f["old_path"])
+                          if f["status"] != "D" else [])
             self.files.append(f)
         self.swift_files = [f for f in self.files if f["path"].endswith(".swift") and f["status"] != "D"
                             and not core.is_fixture_path(f["path"])]
@@ -98,7 +100,43 @@ def load_policy(repo, explicit):
     unknown = set(policy) - POLICY_KEYS
     if unknown:
         raise gitdiff.GitError(f"política com chave desconhecida: {', '.join(sorted(unknown))}")
+    validate_policy(policy)
     return policy, path
+
+
+def is_str_list(value):
+    return isinstance(value, list) and all(isinstance(v, str) for v in value)
+
+
+def validate_policy(policy):
+    """Tipo errado é erro: uma string em ignore_paths ignoraria tudo (fail-open)."""
+    problems = []
+    for key in ("scope_paths", "ignore_paths", "required_checks"):
+        if key in policy and not is_str_list(policy[key]):
+            problems.append(f"{key} deve ser lista de strings")
+    if "verb_synonyms" in policy and not (isinstance(policy["verb_synonyms"], list)
+                                          and all(is_str_list(g) and g for g in policy["verb_synonyms"])):
+        problems.append("verb_synonyms deve ser lista de listas de strings")
+    if "min_platforms" in policy:
+        value = policy["min_platforms"]
+        if not (isinstance(value, dict) and all(
+                isinstance(k, str) and isinstance(v, (str, int, float)) and not isinstance(v, bool)
+                and re.fullmatch(r"\d+(\.\d+)*", str(v)) for k, v in value.items())):
+            problems.append('min_platforms deve ser objeto {"ios": "15.0"}')
+    if "library" in policy and not isinstance(policy["library"], bool):
+        problems.append("library deve ser true ou false")
+    if problems:
+        raise gitdiff.GitError("política inválida: " + "; ".join(problems))
+
+
+def load_evidence(path):
+    data = load_json(path, "evidência")
+    checks = data.get("checks", [])
+    if not (isinstance(checks, list) and all(
+            isinstance(c, dict) and isinstance(c.get("name"), str)
+            and isinstance(c.get("exit"), int) and not isinstance(c.get("exit"), bool) for c in checks)):
+        raise gitdiff.GitError('evidência inválida: checks deve ser lista de {"name": str, "exit": int}')
+    return data
 
 
 def main(argv=None):
@@ -117,7 +155,30 @@ def main(argv=None):
     except gitdiff.GitError as exc:
         print(f"pre-pr-audit: {exc}", file=sys.stderr)
         return 2
+    except Exception as exc:  # erro interno nunca vira relatório vazio nem status de achado
+        print(f"pre-pr-audit: erro interno: {type(exc).__name__}: {exc}", file=sys.stderr)
+        return 2
 
+    try:
+        audit = audit_diff(ctx)
+        text = report.as_json(ctx, audit) if args.format == "json" else report.as_markdown(ctx, audit)
+    except gitdiff.GitError as exc:
+        print(f"pre-pr-audit: {exc}", file=sys.stderr)
+        return 2
+    except Exception as exc:  # erro interno nunca vira relatório vazio nem status de achado
+        print(f"pre-pr-audit: erro interno: {type(exc).__name__}: {exc}", file=sys.stderr)
+        return 2
+
+    if args.output:
+        with open(args.output, "w", encoding="utf-8", errors="backslashreplace") as handle:
+            handle.write(text)
+    else:
+        sys.stdout.reconfigure(encoding="utf-8", errors="backslashreplace")
+        sys.stdout.write(text)
+    return 1 if any(f["severity"] == "BLOCKER" for f in audit.findings) else 0
+
+
+def audit_diff(ctx):
     audit = Audit()
     if not ctx.files:
         audit.add(Finding("CORE-EMPTY-DIFF", "INFO", f"nenhuma diferença entre {ctx.base} e HEAD",
@@ -135,14 +196,7 @@ def main(argv=None):
     core.check_uncommitted(audit, ctx)
     audit.skipped("comportamento em execução: a auditoria não compila nem roda testes")
     audit.skipped("revisão semântica: depende da revisão adversarial descrita na skill")
-
-    text = report.as_json(ctx, audit) if args.format == "json" else report.as_markdown(ctx, audit)
-    if args.output:
-        with open(args.output, "w", encoding="utf-8") as handle:
-            handle.write(text)
-    else:
-        sys.stdout.write(text)
-    return 1 if any(f["severity"] == "BLOCKER" for f in audit.findings) else 0
+    return audit
 
 
 if __name__ == "__main__":
