@@ -1,0 +1,27 @@
+{
+  "pr_view": {
+    "number": 42,
+    "url": "https://github.com/acme/app/pull/42",
+    "state": "OPEN",
+    "isDraft": false,
+    "baseRefName": "dev",
+    "headRefOid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "mergeable": "MERGEABLE",
+    "mergeStateStatus": "CLEAN",
+    "reviews": [
+      {"author": {"login": "reviewer-a"}, "state": "APPROVED", "submittedAt": "2026-11-16T10:00:00Z", "commit": {"oid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}},
+      {"author": {"login": "reviewer-b"}, "state": "APPROVED", "submittedAt": "2026-11-16T11:00:00Z", "commit": {"oid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}
+    ]
+  },
+  "threads": {"data": {"repository": {"pullRequest": {"reviewThreads": {"totalCount": 0, "nodes": []}}}}},
+  "checks": [
+    {"name": "build", "bucket": "pass"},
+    {"name": "lint", "bucket": "pass"}
+  ],
+  "checks_required": [
+    {"name": "build", "bucket": "pass"}
+  ],
+  "rules": [
+    {"type": "pull_request", "parameters": {"required_approving_review_count": 1}}
+  ]
+}
