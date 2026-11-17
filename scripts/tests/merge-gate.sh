@@ -58,7 +58,7 @@ case "$1 ${2:-}" in
   api\ repos/*/protection/required_pull_request_reviews)
     flag classic_forbidden && { echo "gh: Not Found (HTTP 404)" >&2; exit 1; }
     flag classic_error && { echo "gh: Bad Gateway (HTTP 502)" >&2; exit 1; }
-    jq -r '.classic_reviews // 0' "$f" ;;
+    jq -r '.classic_reviews_line // "\(.classic_reviews // 0) false false"' "$f" ;;
   api\ repos/*/branches/*)
     flag branch_error && { echo "gh: Bad Gateway (HTTP 502)" >&2; exit 1; }
     jq -r '.classic_enabled // false' "$f" ;;
@@ -126,7 +126,7 @@ R=(42 -R acme/app)
 
 # --- gate: aprovações -------------------------------------------------
 scenario '.'
-gate "duas aprovações no HEAD: sem BLOCKER" 0 "SEM BLOQUEIO TÉCNICO" "BLOCKER |" "${R[@]}"
+gate "duas aprovações vigentes no PR: sem BLOCKER" 0 "SEM BLOQUEIO TÉCNICO" "BLOCKER |" "${R[@]}"
 gate "relatório nunca autoriza merge" 0 "não autoriza merge" "Resultado: AUTORIZADO" "${R[@]}"
 
 scenario '.pr_view.reviews |= .[:1]'
@@ -134,7 +134,25 @@ gate "uma aprovação e CI verde: BLOCKER" 1 "MG-APPROVALS" - "${R[@]}"
 gate "uma aprovação: gate só informa a exceção, não a concede" 1 "Este script não a concede" "SEM BLOQUEIO" "${R[@]}"
 
 scenario ".pr_view.reviews[1].commit.oid = \"$OLD_SHA\""
-gate "aprovação em commit antigo não conta" 1 "em commit antigo: reviewer-b@bbbbbbbbbb" - "${R[@]}"
+gate "aprovação em commit anterior continua vigente sem dismiss stale" 0 "commit anterior ao HEAD (servidor sem dismiss stale): reviewer-b@bbbbbbbbbb" "BLOCKER |" "${R[@]}"
+
+scenario ".pr_view.reviews[1].commit.oid = \"$OLD_SHA\" | .rules[0].parameters.dismiss_stale_reviews_on_push = true"
+gate "dismiss stale no ruleset: aprovação anterior ao HEAD não conta" 1 "invalidadas pelo dismiss stale do servidor: reviewer-b@bbbbbbbbbb" - "${R[@]}"
+
+scenario ".pr_view.reviews[1].commit.oid = \"$OLD_SHA\" | .classic_enabled = true | .classic_reviews_line = \"1 true false\""
+gate "dismiss stale na proteção clássica: aprovação anterior ao HEAD não conta" 1 "MG-APPROVALS" - "${R[@]}"
+
+scenario '.pr_view.reviews[1].state = "DISMISSED"'
+gate "aprovação dispensada no GitHub não conta" 1 "1 aprovação(ões) vigente(s)" - "${R[@]}"
+
+scenario ".pr_view.reviews[0].commit.oid = \"$OLD_SHA\" | .pr_view.reviews[1].commit.oid = \"$OLD_SHA\" | .rules[0].parameters.require_last_push_approval = true"
+gate "aprovação do último push exigida e ausente no HEAD: BLOCKER" 1 "MG-LAST-PUSH" - "${R[@]}"
+
+scenario ".pr_view.reviews[1].commit.oid = \"$OLD_SHA\" | .rules[0].parameters.require_last_push_approval = true"
+gate "aprovação do último push exigida e presente no HEAD" 0 - "MG-LAST-PUSH" "${R[@]}"
+
+scenario '.classic_enabled = true | .classic_reviews_line = "x y z"'
+gate "proteção clássica com resposta inesperada: erro" 2 "resposta inesperada da proteção clássica" - "${R[@]}"
 
 scenario '.pr_view.reviews += [{"author":{"login":"reviewer-c"},"state":"CHANGES_REQUESTED","submittedAt":"2026-11-16T12:00:00Z","commit":{"oid":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}]'
 gate "CHANGES_REQUESTED vigente: BLOCKER" 1 "MG-CHANGES" - "${R[@]}"
@@ -190,7 +208,7 @@ gate "base confirmada: sem aviso de base" 0 - "MG-BASE" "${R[@]}" --expect-base 
 gate "opção de exceção removida: erro de uso" 2 "opção desconhecida" - "${R[@]}" --approval-exception "qualquer texto"
 
 scenario '.pr_view.url = "https://github.com/other/lib/pull/42" | .pr_view.reviews |= .[:1]'
-gate "repositório fora da política local segue o servidor (1 aprovação)" 0 "aprovações válidas 1/1" "MG-APPROVALS" 42 -R other/lib
+gate "repositório fora da política local segue o servidor (1 aprovação)" 0 "aprovações vigentes 1/1" "MG-APPROVALS" 42 -R other/lib
 
 scenario '.'
 out=$(MERGE_GATE_POLICY_FILE= bash "$GATE" "${R[@]}" 2>&1) && st=0 || st=$?

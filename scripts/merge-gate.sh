@@ -10,6 +10,12 @@
 # O gate também não concede exceção de aprovações; só informa se o PR é
 # elegível a ela pela política (approvals.exceptionEligible).
 #
+# Aprovação vigente: a última revisão de cada revisor no PR é APPROVED.
+# Vale mesmo em commit anterior ao HEAD, salvo quando o servidor invalida
+# aprovações a cada push (dismiss stale: ruleset ou proteção clássica) —
+# aí só conta a do HEAD. Com "approval of the most recent reviewable push"
+# no servidor, falta de aprovação no HEAD é BLOCKER. DISMISSED nunca conta.
+#
 # Uso:
 #   MERGE_GATE_POLICY_FILE=<arquivo> ./scripts/merge-gate.sh <n> -R owner/repo [opções]
 #
@@ -129,14 +135,23 @@ printf '%s' "$rules_json" | jq -e 'type == "array"' >/dev/null 2>&1 \
 
 # Proteção clássica: o mínimo de aprovações só é legível com admin. Sem
 # leitura, o reviewDecision do GitHub continua refletindo a exigência.
-classic_count="" classic_unknown=false
+classic_count="" classic_unknown=false classic_dismiss=false classic_last_push=false
 classic_enabled=$(gh api "repos/$repo/branches/$base_uri" --jq '.protection.enabled // false' 2>/dev/null) \
   || die "não foi possível ler a proteção de $base"
 if [ "$classic_enabled" = true ]; then
   err=$(mktemp "${TMPDIR:-/tmp}/merge-gate.XXXXXX")
-  if classic_count=$(gh api "repos/$repo/branches/$base_uri/protection/required_pull_request_reviews" \
-      --jq '.required_approving_review_count // 0' 2>"$err"); then
-    :
+  if classic_line=$(gh api "repos/$repo/branches/$base_uri/protection/required_pull_request_reviews" \
+      --jq '"\(.required_approving_review_count // 0) \(.dismiss_stale_reviews // false) \(.require_last_push_approval // false)"' 2>"$err"); then
+    read -r classic_count classic_dismiss classic_last_push <<EOF_CLASSIC
+$classic_line
+EOF_CLASSIC
+    case "$classic_count:$classic_dismiss:$classic_last_push" in
+      *[!0-9]*:*:* | :*) rm -f "$err"; die "resposta inesperada da proteção clássica de $base" ;;
+    esac
+    case "$classic_dismiss$classic_last_push" in
+      truetrue|truefalse|falsetrue|falsefalse) ;;
+      *) rm -f "$err"; die "resposta inesperada da proteção clássica de $base" ;;
+    esac
   elif grep -qE 'HTTP 40[34]' "$err"; then
     classic_count="" classic_unknown=true
   else
@@ -161,6 +176,8 @@ report=$(jq -n \
   --arg policy_file "$POLICY_FILE" \
   --arg classic_count "$classic_count" \
   --arg classic_unknown "$classic_unknown" \
+  --arg classic_dismiss "$classic_dismiss" \
+  --arg classic_last_push "$classic_last_push" \
   --arg expect_head "$expect_head" \
   --arg expect_base "$expect_base" '
   def f(sev; rule; evidence; rec): {severity: sev, rule: rule, evidence: evidence, recommendation: rec};
@@ -176,8 +193,13 @@ report=$(jq -n \
       | sort_by(.submittedAt)
       | group_by(.author.login)
       | map(last)) as $latest
-  | ($latest | map(select(.state == "APPROVED" and .commit.oid == $head) | .author.login)) as $valid
-  | ($latest | map(select(.state == "APPROVED" and .commit.oid != $head) | "\(.author.login)@\(.commit.oid | short)")) as $stale
+  | ([$rules[] | select(.type == "pull_request") | .parameters // {}]) as $prp
+  | (($prp | map(.dismiss_stale_reviews_on_push // false) | any) or $classic_dismiss == "true") as $dismiss_stale
+  | (($prp | map(.require_last_push_approval // false) | any) or $classic_last_push == "true") as $last_push
+  | ($latest | map(select(.state == "APPROVED"))) as $approved
+  | ($approved | map(select(.commit.oid == $head) | .author.login)) as $on_head
+  | ($approved | map(select(.commit.oid != $head) | "\(.author.login)@\(.commit.oid | short)")) as $earlier
+  | (if $dismiss_stale then $on_head else ($approved | map(.author.login)) end) as $valid
   | ($latest | map(select(.state == "CHANGES_REQUESTED") | .author.login)) as $changes
   | ($threads.data.repository.pullRequest.reviewThreads) as $rt
   | ($rt.nodes | map(select(.isResolved | not))) as $open_threads
@@ -201,13 +223,15 @@ report=$(jq -n \
        else empty end),
       (if ($valid | length) < $needed then
          f("BLOCKER"; "MG-APPROVALS";
-           "\($valid | length) aprovação(ões) válida(s) no HEAD \($head | short), exigidas \($needed) (servidor: \($server); política: \($policy // "nenhuma"))"
-           + (if ($valid | length) > 0 then "; válidas: \($valid | join(", "))" else "" end)
-           + (if ($stale | length) > 0 then "; em commit antigo: \($stale | join(", "))" else "" end);
-           "aguardar as aprovações; aprovação em commit antigo não conta")
+           "\($valid | length) aprovação(ões) vigente(s) no PR, exigidas \($needed) (servidor: \($server); política: \($policy // "nenhuma"))"
+           + (if ($valid | length) > 0 then "; vigentes: \($valid | join(", "))" else "" end)
+           + (if $dismiss_stale and ($earlier | length) > 0 then "; anteriores ao HEAD, invalidadas pelo dismiss stale do servidor: \($earlier | join(", "))" else "" end);
+           "aguardar as aprovações")
        else empty end),
-      (if ($stale | length) > 0 and ($valid | length) >= $needed then
-         f("INFO"; "MG-APPROVALS"; "aprovação em commit antigo ignorada: \($stale | join(", "))"; "nenhuma") else empty end),
+      (if ($dismiss_stale | not) and ($earlier | length) > 0 then
+         f("INFO"; "MG-APPROVALS"; "aprovação vigente em commit anterior ao HEAD (servidor sem dismiss stale): \($earlier | join(", "))"; "nenhuma") else empty end),
+      (if $last_push and ($on_head | length) == 0 then
+         f("BLOCKER"; "MG-LAST-PUSH"; "o servidor exige aprovação do push mais recente e não há aprovação no HEAD \($head | short)"; "pedir aprovação no HEAD a quem não fez o último push") else empty end),
       (if $pr.reviewDecision == "REVIEW_REQUIRED" then
          f("BLOCKER"; "MG-SERVER"; "o GitHub informa REVIEW_REQUIRED: a exigência de revisão do servidor não foi atendida"; "obter as aprovações exigidas pelo repositório") else empty end),
       (if $classic_unknown == "true" then
@@ -232,7 +256,8 @@ report=$(jq -n \
   | {
       repo: $repo, number: $pr.number, url: $pr.url, head: $head, base: $pr.baseRefName,
       approvals: {
-        valid: $valid, stale: $stale, required: $needed, server: $server, policy: $policy,
+        valid: $valid, earlier: $earlier, onHead: $on_head, required: $needed, server: $server, policy: $policy,
+        dismissStale: $dismiss_stale, lastPushApproval: $last_push,
         policySource: $policy_source, exceptionRule: $policy_exception,
         exceptionEligible: ($policy != null and $policy_exception != ""
           and ($valid | length) < $needed
@@ -252,7 +277,7 @@ if [ "$format" = json ]; then
 else
   printf '%s' "$report" | jq -r '
     "Merge gate — \(.repo)#\(.number)",
-    "HEAD \(.head[0:10]) · base \(.base) · aprovações válidas \(.approvals.valid | length)/\(.approvals.required)",
+    "HEAD \(.head[0:10]) · base \(.base) · aprovações vigentes \(.approvals.valid | length)/\(.approvals.required)",
     "",
     "| Severidade | Regra | Evidência | Recomendação |",
     "|---|---|---|---|",
