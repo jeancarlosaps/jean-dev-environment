@@ -84,26 +84,41 @@ def changed_files(repo, mb):
     return files
 
 
-HUNK = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
+HUNK = re.compile(r"^@@ -\d+(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
 
 
 def added_lines(repo, mb, path, old_path=None):
-    """[(número da linha em HEAD, texto)] das linhas adicionadas no arquivo."""
+    """[(número da linha em HEAD, texto)] das linhas adicionadas no arquivo.
+
+    O patch é lido pela contagem de cada hunk, não pelo prefixo: dentro de
+    um hunk, "+++" é conteúdo adicionado que começa com "++", não cabeçalho.
+    Hunk que termina com contagem pendente é saída inesperada (status 2).
+    """
     specs = [literal(path)] + ([literal(old_path)] if old_path and old_path != path else [])
     out = git(repo, "diff", "-U0", "-M", mb, "HEAD", "--", *specs)
-    lines, current = [], None
-    for raw in out.splitlines():
+    lines, current, old_left, new_left = [], None, 0, 0
+    for raw in out.split("\n"):
+        if old_left > 0 or new_left > 0:
+            if raw.startswith("+"):
+                lines.append((current, raw[1:])); current += 1; new_left -= 1
+            elif raw.startswith("-"):
+                old_left -= 1
+            elif raw.startswith(" "):
+                current += 1; old_left -= 1; new_left -= 1
+            elif raw.startswith("\\"):
+                pass  # "\ No newline at end of file"
+            else:
+                raise GitError(f"hunk incompleto no diff de {path}")
+            continue
+        if raw.startswith("\\"):
+            continue
         match = HUNK.match(raw)
         if match:
-            current = int(match.group(1))
-            continue
-        if current is None or raw.startswith(("+++", "---")):
-            continue
-        if raw.startswith("+"):
-            lines.append((current, raw[1:]))
-            current += 1
-        elif raw.startswith(" "):
-            current += 1
+            old_left = int(match.group(1)) if match.group(1) is not None else 1
+            current = int(match.group(2))
+            new_left = int(match.group(3)) if match.group(3) is not None else 1
+    if old_left > 0 or new_left > 0:
+        raise GitError(f"hunk incompleto no diff de {path}")
     return lines
 
 

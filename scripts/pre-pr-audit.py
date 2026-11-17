@@ -161,12 +161,17 @@ def main(argv=None):
         print(f"pre-pr-audit: erro interno: {type(exc).__name__}: {exc}", file=sys.stderr)
         return 2
 
-    if args.output:
-        with open(args.output, "w", encoding="utf-8", errors="backslashreplace") as handle:
-            handle.write(text)
-    else:
-        sys.stdout.reconfigure(encoding="utf-8", errors="backslashreplace")
-        sys.stdout.write(text)
+    try:
+        if args.output:
+            with open(args.output, "w", encoding="utf-8", errors="backslashreplace") as handle:
+                handle.write(text)
+        else:
+            sys.stdout.reconfigure(encoding="utf-8", errors="backslashreplace")
+            sys.stdout.write(text)
+            sys.stdout.flush()
+    except OSError as exc:  # falha operacional, não achado: status 2, sem traceback
+        print(f"pre-pr-audit: não foi possível gravar o relatório ({exc.strerror or exc})", file=sys.stderr)
+        return 2
     return 1 if any(f["severity"] == "BLOCKER" for f in audit.findings) else 0
 
 
